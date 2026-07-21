@@ -14,10 +14,8 @@ Official Wisconsin Robotics software repository for the 2027 University Rover Ch
 - **Inside** the container, clone the repo into the workspace directory:
 
   ```bash
-  git clone git@github.com:WisconsinRobotics/WRoverSoftware_Docker.git
+  git clone git@github.com:WisconsinRobotics/WRoverSoftware_26-27.git
   ```
-
-  > **Note:** We use pre-commit hooks to format code and check for simple mistakes, they automatically run before every commit.
 
 - Initialize pre-commit hooks:
 
@@ -30,3 +28,5 @@ Official Wisconsin Robotics software repository for the 2027 University Rover Ch
   ```bash
   pre-commit run -a
   ```
+
+  > We use pre-commit hooks to format code and check for simple mistakes. They automatically run before every commit.
