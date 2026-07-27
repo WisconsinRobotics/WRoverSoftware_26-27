@@ -29,4 +29,4 @@ Official Wisconsin Robotics software repository for the 2027 University Rover Ch
   pre-commit run -a
   ```
 
-  > We use pre-commit hooks to format code and check for simple mistakes. They automatically run before every commit.
+  > We use pre-commit hooks to format code and check for syntax errors. They automatically run before every commit.
