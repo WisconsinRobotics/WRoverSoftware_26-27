@@ -112,7 +112,7 @@ def compute_geometric_median(
 
     # Reaching this point means MAX_ITERATIONS was exhausted.
     warnings.warn(
-        "[object_pose_estimator]: Geometric median did not converge "
+        "[point_cloud_utils]: Geometric median did not converge "
         f"within {MAX_ITERATIONS} iterations."
     )
 
