@@ -16,6 +16,7 @@ ros2 run wr_can can
 
 3. In another terminal, publish an example:
 ```bash
+source install/setup.bash
 ros2 topic pub can_send std_msgs/String "data: 23 CAN_PACKET_SET_CURRENT 51 int"
 ```
 

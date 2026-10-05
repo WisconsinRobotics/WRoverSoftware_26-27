@@ -1,6 +1,8 @@
+import os
+from glob import glob
 from setuptools import find_packages, setup
 
-package_name = "detection"
+package_name = "wr_imu"
 
 setup(
     name=package_name,
@@ -9,19 +11,18 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
+        (os.path.join("share", package_name, "launch"), glob("launch/*")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
-    maintainer="root",
-    maintainer_email="root@todo.todo",
-    description="TODO: Package description",
-    license="TODO: License declaration",
-    extras_require={
-        "test": [
-            "pytest",
-        ],
-    },
+    maintainer="Wisconsin Robotics",
+    maintainer_email="wisconsinrobotics@gmail.com",
+    description="Publishes IMU yaw",
+    license="MIT",
+    tests_require=[],
     entry_points={
-        "console_scripts": [],
+        "console_scripts": [
+            "imu = wr_imu.imu:main",
+        ],
     },
 )

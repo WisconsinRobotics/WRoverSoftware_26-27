@@ -16,6 +16,7 @@ ros2 run wr_drive swerve
 
 3. In another terminal, publish an example:
 ```bash
+source install/setup.bash
 ros2 topic pub /swerve std_msgs/msg/Float32MultiArray "data: [0.0, 0.0, 1.0, 1.0]"
 ```
 

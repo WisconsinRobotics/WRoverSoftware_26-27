@@ -44,9 +44,8 @@ DISTANCE_EPSILON = 1e-12
 TOLERANCE = 1e-6
 MAX_ITERATIONS = 100
 
-def compute_geometric_median(
-    points: NDArray[np.float64]
-) -> NDArray[np.float64]:
+
+def compute_geometric_median(points: NDArray[np.float64]) -> NDArray[np.float64]:
     """
     Computes the geometric median of the given point cloud using a
     numerically stabilized variant of Weiszfeld's algorithm.
@@ -70,9 +69,7 @@ def compute_geometric_median(
         raise ValueError("Point cloud cannot be empty.")
 
     if points.ndim != 2 or points.shape[1] != 3:
-        raise ValueError(
-            f"Expected point cloud with shape (N, 3), got {points.shape}."
-        )
+        raise ValueError(f"Expected point cloud with shape (N, 3), got {points.shape}.")
 
     # A single point is trivially its own geometric median.
     if len(points) == 1:
@@ -84,25 +81,14 @@ def compute_geometric_median(
 
     # 2) Iterate until convergence.
     for _ in range(MAX_ITERATIONS):
-
         # Find the distance from every point to our current estimate.
-        distances = np.linalg.norm(
-            points - previous_estimate,
-            axis=1
-        )
+        distances = np.linalg.norm(points - previous_estimate, axis=1)
 
         # Points closer to the current estimate receive greater weight.
-        weights = 1.0 / np.maximum(
-            distances,
-            DISTANCE_EPSILON
-        )
+        weights = 1.0 / np.maximum(distances, DISTANCE_EPSILON)
 
         # Compute the next weighted estimate.
-        next_estimate = np.average(
-            points,
-            axis=0,
-            weights=weights
-        )
+        next_estimate = np.average(points, axis=0, weights=weights)
 
         # Stop if the estimate has barely changed.
         if np.linalg.norm(next_estimate - previous_estimate) < TOLERANCE:
@@ -118,14 +104,16 @@ def compute_geometric_median(
 
     return previous_estimate
 
+
 # ---------------------------------------------------------------------------
 # Conversion
 # ---------------------------------------------------------------------------
 
+
 def deproject_pixels_to_point_cloud(
     points: NDArray[np.int32],
     depth_image: NDArray[np.uint16],
-    camera_matrix: NDArray[np.float64]
+    camera_matrix: NDArray[np.float64],
 ) -> NDArray[np.float64]:
     """
     Computes a 3D point cloud from a collection of 2D pixel coordinates,

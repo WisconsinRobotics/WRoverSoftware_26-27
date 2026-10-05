@@ -18,6 +18,7 @@ ros2 run wr_controller drive_controller
 
 2. Start the swerve node in a new terminal:
 ```bash
+source install/setup.bash
 ros2 run wr_drive swerve
 ```
 
