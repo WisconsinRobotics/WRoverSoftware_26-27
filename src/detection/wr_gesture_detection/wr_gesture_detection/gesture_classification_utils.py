@@ -15,17 +15,10 @@ from entering the classification pipeline.
 
 __author__ = "Cameron Myhre"
 
-from ultralytics import YOLO
 from ultralytics.engine.results import Keypoints
 import numpy as np
 from numpy.typing import NDArray
 import warnings
-
-# Load a model
-model = YOLO("yolo26n-pose.pt")
-
-# Predict with the model
-results = model("img.jpg")
 
 
 def normalize_figure(
