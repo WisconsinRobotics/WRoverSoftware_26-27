@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = "detection"
+package_name = "wr_gesture_detection"
 
 setup(
     name=package_name,
