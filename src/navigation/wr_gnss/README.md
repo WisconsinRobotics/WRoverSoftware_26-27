@@ -19,7 +19,7 @@ colcon build
 source install/setup.bash
 ```
 
-3. Launch the gnss ode:
+3. Launch the gnss node:
 ```bash
 ros2 launch wr_gnss gnss_launch.py
 ```
