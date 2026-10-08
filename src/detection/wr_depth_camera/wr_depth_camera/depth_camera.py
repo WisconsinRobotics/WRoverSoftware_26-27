@@ -1,3 +1,29 @@
+"""
+Provides synchronized RGB and depth data from an OAK-D Wide camera
+for use by other modules within the same Python process.
+This module initializes a DepthAI V3 pipeline, captures undistorted
+RGB images and stereo depth measurements, and aligns depth data to
+the RGB camera's image coordinates.
+
+It maintains the most recently acquired color and depth frames,
+a frame index for tracking updates, and the RGB camera's intrinsic
+matrix for converting image coordinates into 3D camera-relative
+positions.
+
+Depth measurements are represented in millimeters to preserve
+measurement precision.
+
+Note:
+    The effective RGB intrinsic matrix is retrieved from the
+    image transformation metadata and must be validated for
+    consistency with the undistorted image geometry.
+
+    This module is not currently thread safe, and depending on how ROS2
+    processing works, variables may be inaccessible or duplicate data.
+"""
+
+__author__ = "Cameron Myhre"
+
 import depthai as dai
 import numpy as np
 from datetime import timedelta
@@ -8,7 +34,7 @@ from typing import cast
 RGB_CAMERA_MATRIX = None
 
 # 0b) Allow other modules to access the latest camera data.
-# TODO: Verify that this is acessible to ROS2 nodes.
+# TODO: Verify that this is accessible to ROS2 nodes.
 frame_index = -1  # -1 indicated no frame has been received yet.
 color_frame = None
 depth_frame = None
@@ -68,7 +94,7 @@ with dai.Pipeline() as pipeline:
     # 4b) Create a queue for synchronized frames.
     sync_queue = sync.out.createOutputQueue(maxSize=4, blocking=False)
 
-    # 5) Retrieve camera calibration. (TEMP--MAY BE REMOVED IF UNDISTORTION MATRIX WORKS)
+    # 5) Retrieve camera calibration. (TEMP--MAY BE REMOVED IF UNDISTORTED MATRIX WORKS)
     # device = pipeline.getDefaultDevice()
     # calibration = device.readCalibration()
 
