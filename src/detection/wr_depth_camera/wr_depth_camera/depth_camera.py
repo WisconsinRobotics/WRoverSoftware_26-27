@@ -238,8 +238,9 @@ class DepthCamera(Node):
             # 3a) Create the stereo depth processing node.
             stereo = pipeline.create(dai.node.StereoDepth)
             stereo.setLeftRightCheck(True)
-            stereo.setSubpixel(True)
-
+            stereo.setExtendedDisparity(
+                True
+            )  # Better for close range estimation.Use setSubpixel() for longer ranges.
             stereo.initialConfig.setDepthUnit(
                 dai.StereoDepthConfig.AlgorithmControl.DepthUnit.MILLIMETER
             )
