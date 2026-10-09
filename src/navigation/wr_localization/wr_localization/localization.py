@@ -14,12 +14,14 @@
 #   '/pose' (geometry_msgs/Pose2D)
 # =============================================================================
 
-import rclpy, math
+import rclpy
+import math
 from rclpy.node import Node
 from std_msgs.msg import Float32
 from geometry_msgs.msg import Point, Pose2D
 
 from ublox_ubx_msgs.msg import UBXNavPVT
+
 
 class Localization(Node):
     UBX_DEG_SCALE = 1e-7
@@ -30,7 +32,7 @@ class Localization(Node):
         super().__init__("localization")
 
         self.init_pos = None
-        self.pose = Pose2D(x=math.nan,y=math.nan,theta=math.nan)
+        self.pose = Pose2D(x=math.nan, y=math.nan, theta=math.nan)
         self.imu_offset = None
         self.imu_raw = None
 
@@ -44,13 +46,17 @@ class Localization(Node):
         # IMU Subscriber
         # ---------------------------------------------------------------------
 
-        self.imu_subscription_ = self.create_subscription(Float32, "/imu", self.imu_callback, 10)
+        self.imu_subscription_ = self.create_subscription(
+            Float32, "/imu", self.imu_callback, 10
+        )
 
         # ---------------------------------------------------------------------
         # GNSS Subscriber
         # ---------------------------------------------------------------------
 
-        self.gnss_subscription_ = self.create_subscription(UBXNavPVT, "/ubx_nav_pvt", self.gnss_callback, 10)
+        self.gnss_subscription_ = self.create_subscription(
+            UBXNavPVT, "/ubx_nav_pvt", self.gnss_callback, 10
+        )
 
         # ---------------------------------------------------------------------
         # Pose Publisher
@@ -70,8 +76,7 @@ class Localization(Node):
         if not msg.gnss_fix_ok or msg.gps_fix.fix_type not in [2, 3, 4]:
             return
         current_geo = Point(
-            x=msg.lon * self.UBX_DEG_SCALE,
-            y=msg.lat * self.UBX_DEG_SCALE
+            x=msg.lon * self.UBX_DEG_SCALE, y=msg.lat * self.UBX_DEG_SCALE
         )
         # This could be called from some explicit initialization event.
         if self.init_pos is None:
@@ -82,15 +87,22 @@ class Localization(Node):
         # TODO: This condition is just a placeholder. It triggers when more than 10 meters away.
         # Since we have IMU data, we could use that to verify that we kept our heading while moving.
         if math.hypot(dpos.x, dpos.y) > self.off_dist_threshold and (
-                self.imu_raw is not None and self.imu_offset is None):
+            self.imu_raw is not None and self.imu_offset is None
+        ):
             # Figure out imu offset.
-            self.imu_offset = self.normalize_angle(self.imu_raw - math.atan2(dpos.y, dpos.x))
+            self.imu_offset = self.normalize_angle(
+                self.imu_raw - math.atan2(dpos.y, dpos.x)
+            )
         self.publish_pose()
 
     def publish_pose(self):
         # TODO: Figure out if pose should publish without heading data.
         # This must be accounted for by all of /pose's subscribers.
-        if not math.isnan(self.pose.x) and not math.isnan(self.pose.y) and not math.isnan(self.pose.theta):
+        if (
+            not math.isnan(self.pose.x)
+            and not math.isnan(self.pose.y)
+            and not math.isnan(self.pose.theta)
+        ):
             self.pose_publisher_.publish(self.pose)
 
     # Takes two different geographic coordinates and spits out a difference in meters.
@@ -99,7 +111,7 @@ class Localization(Node):
         dlon = math.radians(end.x - start.x)
         return Point(
             x=dlon * self.EARTH_RADIUS * math.cos(math.radians(start.y)),
-            y=dlat * self.EARTH_RADIUS
+            y=dlat * self.EARTH_RADIUS,
         )
 
     # Binds the angle from -pi to pi.
