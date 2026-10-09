@@ -14,17 +14,20 @@
 #   '/swerve' (std_msgs/Float32MultiArray)
 # =============================================================================
 
-import rclpy, math
+import rclpy
+import math
 from enum import Enum
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
 from geometry_msgs.msg import Point, Pose2D
+
 
 class NavModes(Enum):
     IDLE = 0
     DANCE = 1
     IMU_CORRECTION = 2
     GNSS_TARGET = 3
+
 
 class Nav(Node):
     def __init__(self):
@@ -36,13 +39,17 @@ class Nav(Node):
         # Pose Subscriber
         # ---------------------------------------------------------------------
 
-        self.pose_subscriber_ = self.create_subscription(Pose2D, "/pose", self.pose_callback, 10)
+        self.pose_subscriber_ = self.create_subscription(
+            Pose2D, "/pose", self.pose_callback, 10
+        )
 
         # ---------------------------------------------------------------------
         # Target Subscriber
         # ---------------------------------------------------------------------
 
-        self.target_subscriber_ = self.create_subscription(Point, "/target", self.pose_callback, 10)
+        self.target_subscriber_ = self.create_subscription(
+            Point, "/target", self.pose_callback, 10
+        )
 
         # ---------------------------------------------------------------------
         # Swerve Publisher
@@ -59,6 +66,7 @@ class Nav(Node):
 
     def publish_drive(self, fwd: float, swerve: float, rot: float):
         self.swerve_publisher_.publish([fwd, swerve, 0.0, rot])
+
 
 # =============================================================================
 # Main

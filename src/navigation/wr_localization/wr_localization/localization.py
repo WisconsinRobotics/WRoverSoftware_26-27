@@ -112,14 +112,13 @@ class Localization(Node):
         # Latitude midpoint
         mid_lat = math.radians((start.y + end.y) / 2)
         return Point(
-            x=dlon * self.EARTH_RADIUS * math.cos(mid_lat),
-            y=dlat * self.EARTH_RADIUS
+            x=dlon * self.EARTH_RADIUS * math.cos(mid_lat), y=dlat * self.EARTH_RADIUS
         )
 
     # TODO: Should we use this version instead? Currently unused.
     def geo_to_dpos_wgs84(self, start: Point, end: Point) -> Point:
-        a = 6378137.0            # semi-major axis in meters
-        e2 = 0.00669437999014    # first eccentricity squared
+        a = 6378137.0  # semi-major axis in meters
+        e2 = 0.00669437999014  # first eccentricity squared
 
         mid_lat = math.radians((start.y + end.y) / 2.0)
         dlat = self.normalize_angle(math.radians(end.y - start.y))
@@ -127,13 +126,10 @@ class Localization(Node):
 
         # What the fuck?
         denom = math.sqrt(1.0 - e2 * math.sin(mid_lat) ** 2)
-        M = a * (1.0 - e2) / (denom ** 3)  # Meridional (y)
-        N = a / denom                      # Transverse (x)
+        M = a * (1.0 - e2) / (denom**3)  # Meridional (y)
+        N = a / denom  # Transverse (x)
 
-        return Point(
-            x=dlon * N * math.cos(mid_lat),
-            y=dlat * M
-        )
+        return Point(x=dlon * N * math.cos(mid_lat), y=dlat * M)
 
     # Binds the angle from -pi to pi.
     def normalize_angle(self, angle: float) -> float:
