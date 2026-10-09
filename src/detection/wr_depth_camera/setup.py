@@ -22,6 +22,6 @@ setup(
         ],
     },
     entry_points={
-        "console_scripts": [],
+        "console_scripts": ["depth_camera = wr_depth_camera.depth_camera:main"],
     },
 )
