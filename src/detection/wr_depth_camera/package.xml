@@ -4,8 +4,8 @@
   <name>wr_depth_camera</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
-  <maintainer email="cameronmyhre@icloud.com">root</maintainer>
-  <license>TODO: License declaration</license>
+  <maintainer email="wisconsinrobotics@gmail.com">Wisconsin Robotics</maintainer>
+  <license>MIT</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
