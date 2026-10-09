@@ -82,8 +82,8 @@ class Localization(Node):
         if self.init_pos is None:
             self.init_pos = current_geo
         dpos = self.geo_to_dpos(self.init_pos, current_geo)
-        self.pose.x = dpos.x
-        self.pose.y = dpos.y
+        self.pose.x = current_geo.x
+        self.pose.y = current_geo.y
         # TODO: This condition is just a placeholder. It triggers when more than 10 meters away.
         # Since we have IMU data, we could use that to verify that we kept our heading while moving.
         if math.hypot(dpos.x, dpos.y) > self.off_dist_threshold and (
@@ -109,9 +109,30 @@ class Localization(Node):
     def geo_to_dpos(self, start: Point, end: Point) -> Point:
         dlat = math.radians(end.y - start.y)
         dlon = math.radians(end.x - start.x)
+        # Latitude midpoint
+        mid_lat = math.radians((start.y + end.y) / 2)
         return Point(
-            x=dlon * self.EARTH_RADIUS * math.cos(math.radians(start.y)),
-            y=dlat * self.EARTH_RADIUS,
+            x=dlon * self.EARTH_RADIUS * math.cos(mid_lat),
+            y=dlat * self.EARTH_RADIUS
+        )
+
+    # TODO: Should we use this version instead? Currently unused.
+    def geo_to_dpos_wgs84(self, start: Point, end: Point) -> Point:
+        a = 6378137.0            # semi-major axis in meters
+        e2 = 0.00669437999014    # first eccentricity squared
+
+        mid_lat = math.radians((start.y + end.y) / 2.0)
+        dlat = self.normalize_angle(math.radians(end.y - start.y))
+        dlon = self.normalize_angle(math.radians(end.x - start.x))
+
+        # What the fuck?
+        denom = math.sqrt(1.0 - e2 * math.sin(mid_lat) ** 2)
+        M = a * (1.0 - e2) / (denom ** 3)  # Meridional (y)
+        N = a / denom                      # Transverse (x)
+
+        return Point(
+            x=dlon * N * math.cos(mid_lat),
+            y=dlat * M
         )
 
     # Binds the angle from -pi to pi.
