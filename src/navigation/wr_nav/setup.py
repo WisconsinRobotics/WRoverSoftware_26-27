@@ -17,6 +17,6 @@ setup(
     description="TODO: Package description",
     license="MIT",
     entry_points={
-        "console_scripts": [],
+        "console_scripts": ["nav = wr_nav.navigation:main"],
     },
 )

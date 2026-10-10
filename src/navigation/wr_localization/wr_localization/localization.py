@@ -1,40 +1,87 @@
 # =============================================================================
 # Background:
 # TODO: all of this
+# TODO: implement drift correction
 # =============================================================================
 # Brief:
 #
 # =============================================================================
 # Subscribes to:
-#   '/imu'
-#   '/ubx_nav_pvt'
+#   '/imu' (std_msgs/Float32)
+#       Description:
+#           Raw Pigeon2 yaw in degrees, published at 100 Hz.
+#       Format:
+#           yaw (float32)
+#       Example:
+#           180.0
+#   '/ubx_nav_pvt' (ublox_ubx_msgs/UBXNavPVT)
+#       Description:
+#           GNSS receiver data, including latitude and longitude data.
+#       Format:
+#           ...
+#           lon: float
+#           lat: float
+#           ...
+#       Example:
+#           ...
+#           lon: -894012345
+#           lat: 433821234
+#           ...
 #
 # =============================================================================
 # Publishes to:
 #   '/pose' (geometry_msgs/Pose2D)
+#       Description:
+#           Publishes our geographic coordinates and heading as a pose.
+#       Format: TODO: Is this correctly documented?
+#           x: longitude (degrees)
+#           y: latitude (degrees)
+#           theta: heading (radians)
+#       Example:
+#           x: 43.07
+#           y: -89.4
+#           theta: 39.2
+#       Notes:
+#           Theta can be a NaN! This means that localization is unsure of the
+#           robot's current heading, and this doubles as a signal to the nav
+#           node to move straight to imu correct. Also, theta should be CCW positive.
 # =============================================================================
 
 import rclpy
 import math
+from rclpy.time import Time
 from rclpy.node import Node
 from std_msgs.msg import Float32
 from geometry_msgs.msg import Point, Pose2D
 
-from ublox_ubx_msgs.msg import UBXNavPVT
+from ublox_ubx_msgs.msg import UBXNavPVT, GpsFix
 
 
 class Localization(Node):
     UBX_DEG_SCALE = 1e-7
-    EARTH_RADIUS = 6371000.0
-    DEFAULT_OFF_DIST_THRESH = 10.0
+
+    DEFAULT_OFF_DIST_THRESH = 20.0
+    IMU_ERR_THRESH = math.radians(20.0)
+
+    GOOD_FIX_TYPES = [
+        GpsFix.GPS_FIX_2D,
+        GpsFix.GPS_FIX_3D,
+        GpsFix.GPS_PLUS_DEAD_RECKONING,
+    ]
+    GOOD_FIX_TIMEOUT = 2.0
 
     def __init__(self):
         super().__init__("localization")
 
+        # This is NOT the initial position of the robot, this is just the position used for imu correction.
         self.init_pos = None
         self.pose = Pose2D(x=math.nan, y=math.nan, theta=math.nan)
-        self.imu_offset = None
-        self.imu_raw = None
+
+        self.imu_offset = None  # imu offset
+        self.imu_raw = None  # last imu reading
+        self.imu_ref = None  # used for checking if the robot is actually going straight
+
+        self.last_good_fix = Time(seconds=0, clock_type=self.get_clock().clock_type)
 
         # Parameter(s)
         self.declare_parameter("off_dist_thresh", self.DEFAULT_OFF_DIST_THRESH)
@@ -65,27 +112,33 @@ class Localization(Node):
         self.pose_publisher_ = self.create_publisher(Pose2D, "/pose", 10)
 
     def imu_callback(self, msg: Float32):
-        self.imu_raw = msg.data
+        self.imu_raw = math.radians(msg.data)
+        if self.imu_ref is None:
+            self.imu_ref = self.imu_raw
         if self.imu_offset is not None:
             # TODO: Make sure that this heading has the correct sign.
-            self.pose.theta = self.normalize_angle(msg.data - self.imu_offset)
+            self.pose.theta = self.normalize_angle(self.imu_raw - self.imu_offset)
         self.publish_pose()
 
     def gnss_callback(self, msg: UBXNavPVT):
         # Message might not have the information we want.
-        if not msg.gnss_fix_ok or msg.gps_fix.fix_type not in [2, 3, 4]:
+        if not msg.gnss_fix_ok or msg.gps_fix.fix_type not in self.GOOD_FIX_TYPES:
             return
-        current_geo = Point(
-            x=msg.lon * self.UBX_DEG_SCALE, y=msg.lat * self.UBX_DEG_SCALE
-        )
+        self.last_good_fix = self.get_clock().now()
+        self.pose.x = msg.lon * self.UBX_DEG_SCALE
+        self.pose.y = msg.lat * self.UBX_DEG_SCALE
         # This could be called from some explicit initialization event.
-        if self.init_pos is None:
-            self.init_pos = current_geo
-        dpos = self.geo_to_dpos(self.init_pos, current_geo)
-        self.pose.x = current_geo.x
-        self.pose.y = current_geo.y
-        # TODO: This condition is just a placeholder. It triggers when more than 10 meters away.
-        # Since we have IMU data, we could use that to verify that we kept our heading while moving.
+        # TODO: Validate that this resets reference pos if our imu changes too much.
+        if self.init_pos is None or (
+            (self.imu_ref is not None)
+            and abs(self.normalize_angle(self.imu_raw - self.imu_ref))
+            > self.IMU_ERR_THRESH
+        ):
+            self.init_pos = self.get_pos()
+            self.imu_ref = self.imu_raw
+
+        dpos = self.geo_to_dpos(self.init_pos, self.get_pos())
+        # The IMU calibration triggers when more than 20 meters away. (By default)
         if math.hypot(dpos.x, dpos.y) > self.off_dist_threshold and (
             self.imu_raw is not None and self.imu_offset is None
         ):
@@ -93,30 +146,51 @@ class Localization(Node):
             self.imu_offset = self.normalize_angle(
                 self.imu_raw - math.atan2(dpos.y, dpos.x)
             )
+            self.pose.theta = self.normalize_angle(self.imu_raw - self.imu_offset)
         self.publish_pose()
 
     def publish_pose(self):
-        # TODO: Figure out if pose should publish without heading data.
+        """Publish our current pose to /pose."""
+        # Pose CAN publish a nan theta.
         # This must be accounted for by all of /pose's subscribers.
+        since_last_good_fix = (
+            self.get_clock().now() - self.last_good_fix
+        ).nanoseconds * 1e-9
         if (
             not math.isnan(self.pose.x)
             and not math.isnan(self.pose.y)
-            and not math.isnan(self.pose.theta)
+            and since_last_good_fix < self.GOOD_FIX_TIMEOUT
         ):
             self.pose_publisher_.publish(self.pose)
 
-    # Takes two different geographic coordinates and spits out a difference in meters.
+    def get_pos(self) -> Point:
+        """Get position of robot as a Point."""
+        return Point(x=self.pose.x, y=self.pose.y)
+
     def geo_to_dpos(self, start: Point, end: Point) -> Point:
+        """
+        Takes two different geographic coordinates and spits out a difference in meters.
+        There is an error of approximately 1-3m depending on direction after 1km of travel.
+        """
+        EARTH_RADIUS = 6371000.0
+
         dlat = math.radians(end.y - start.y)
         dlon = math.radians(end.x - start.x)
         # Latitude midpoint
         mid_lat = math.radians((start.y + end.y) / 2)
-        return Point(
-            x=dlon * self.EARTH_RADIUS * math.cos(mid_lat), y=dlat * self.EARTH_RADIUS
-        )
+        return Point(x=dlon * EARTH_RADIUS * math.cos(mid_lat), y=dlat * EARTH_RADIUS)
 
     # TODO: Should we use this version instead? Currently unused.
     def geo_to_dpos_wgs84(self, start: Point, end: Point) -> Point:
+        """
+        Takes two different geographic coordinates and spits out a difference in meters.
+        This version of geo_to_dpos takes into account that the Earth is more like an
+        oblate spheroid, hence some slightly confusing math to compute effective radii along
+        the meridional and transverse planes is included. (How the derivation for these radii works
+        is beyond me.)
+
+        This version is more accurate than `geo_to_dpos`, having millimeters of error after 1km of travel.
+        """
         a = 6378137.0  # semi-major axis in meters
         e2 = 0.00669437999014  # first eccentricity squared
 
@@ -131,8 +205,8 @@ class Localization(Node):
 
         return Point(x=dlon * N * math.cos(mid_lat), y=dlat * M)
 
-    # Binds the angle from -pi to pi.
     def normalize_angle(self, angle: float) -> float:
+        """Binds the angle from -pi to pi."""
         return math.atan2(math.sin(angle), math.cos(angle))
 
 
