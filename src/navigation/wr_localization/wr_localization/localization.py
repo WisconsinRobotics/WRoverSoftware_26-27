@@ -111,6 +111,8 @@ class Localization(Node):
 
         self.pose_publisher_ = self.create_publisher(Pose2D, "/pose", 10)
 
+        self.get_logger().info("Started localization node.")
+
     def imu_callback(self, msg: Float32):
         self.imu_raw = math.radians(msg.data)
         if self.imu_ref is None:

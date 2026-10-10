@@ -108,6 +108,8 @@ class Nav(Node):
         # ---------------------------------------------------------------------
         self.failsafe_timer_ = self.create_timer(1.0, self.failsafe_callback)
 
+        self.get_logger().info("Started nav node.")
+
     def pose_callback(self, msg: Pose2D):
         # If we don't have a heading, we assume we have to get it. So, drive forward.
         if math.isnan(msg.theta) and self.mode != NavModes.IDLE:
@@ -198,7 +200,7 @@ class Nav(Node):
     def geo_to_dpos(self, start: Point, end: Point) -> Point:
         """
         Takes two different geographic coordinates and spits out a difference in meters.
-        There is an error of approximately a meter after 1km of travel.
+        There is an error of approximately 1-3m depending on direction after 1km of travel.
         """
         EARTH_RADIUS = 6371000.0
 
