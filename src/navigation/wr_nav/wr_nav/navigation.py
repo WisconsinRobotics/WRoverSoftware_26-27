@@ -1,9 +1,25 @@
 # =============================================================================
 # Background:
-# TODO: all of this
+#   Autonomous navigation uses the rover's geographic position and heading to
+#   drive toward a GNSS target. Localization supplies longitude, latitude, and
+#   heading, while the swerve drive pipeline turns motion commands into wheel
+#   speed and steering commands.
+#
+#   This node approximates the displacement to the target in east/north meters
+#   to calculate the remaining distance and desired heading. It turns toward
+#   the target before driving forward, continues correcting its heading while
+#   moving, and stops once it reaches the configured distance tolerance.
+#
+#   Localization needs straight-line travel to establish its initial heading.
+#   While navigation is active, an unknown heading causes this node to drive
+#   straight until calibration finishes. A watchdog returns the node to idle
+#   if pose updates stop arriving.
+#
 # =============================================================================
 # Brief:
-#
+#   Uses the rover's pose to steer toward a GNSS target and publishes swerve
+#   drive commands. Drives straight while localization establishes a heading,
+#   stops within the target distance tolerance, and idles if pose updates stop.
 # =============================================================================
 # Subscribes to:
 #   '/pose' (geometry_msgs/Pose2D)
@@ -69,7 +85,7 @@ class Nav(Node):
 
         self.last_pose = Time(seconds=0, clock_type=self.get_clock().clock_type)
 
-        # Parameter(s)
+        # Parameters
         self.declare_parameter("heading_tolerance", self.DEFAULT_HEADING_TOLERANCE)
         self.heading_tolerance = math.radians(
             self.get_parameter("heading_tolerance").get_parameter_value().double_value
@@ -151,7 +167,7 @@ class Nav(Node):
 
     # TODO: Decide if we should use this...
     def do_dance(self):
-        """The idea behind "dancing" is so that we can wiggle ourself out of any tight spots."""
+        """The idea behind "dancing" is to wiggle ourself out of any tight spots."""
         self.last_dance_controls = tuple(
             self.clamp(
                 c + random.choice([0.05, -0.05]), -self.DANCE_LIMIT, self.DANCE_LIMIT
@@ -161,13 +177,13 @@ class Nav(Node):
         self.publish_drive(*self.last_dance_controls)
 
     def do_gnss_target(self, pose: Pose2D):
+        """Navigates to a GNSS target by first facing the target and moving towards it."""
         if self.target is None:  # This should NEVER occur, but just in case...
             self.get_logger().warning(
                 "wr_nav: using gnss target mode without a target."
             )
             self.change_mode(NavModes.IDLE)
             return
-        # Basic implementation: face target, then move towards it.
         dpos = self.geo_to_dpos(Point(x=pose.x, y=pose.y), self.target)
         dist = math.hypot(dpos.x, dpos.y)
 

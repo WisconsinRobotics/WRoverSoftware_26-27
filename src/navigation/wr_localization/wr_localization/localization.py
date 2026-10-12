@@ -1,10 +1,32 @@
 # =============================================================================
 # Background:
-# TODO: all of this
-# TODO: implement drift correction
+#   The rover uses GNSS (Global Navigation Satellite System) measurements for
+#   geographic position and a CTRE Phoenix6 Pigeon2 IMU for yaw. GNSS provides
+#   longitude and latitude, while the IMU tracks changes in orientation. The
+#   IMU yaw needs an offset to align it with a geographic heading.
+#
+#   This node establishes that offset from the direction of straight-line GNSS
+#   displacement, assuming the rover is moving forward. Calibration requires
+#   more than 20 meters of displacement by default. A change in IMU yaw of more
+#   than 20 degrees restarts the reference position on the next valid GNSS fix.
+#   (TODO restart reference position)
+#   Until calibrated, the published heading is NaN, which signals active
+#   navigation to drive straight so that localization can establish a heading.
+#
+#   After calibration, the offset is applied to subsequent IMU readings. The
+#   pose contains longitude and latitude in degrees and heading in radians,
+#   measured counterclockwise from east. Only valid GNSS fixes update position,
+#   and pose publication stops when the last valid fix becomes too old.
+#   The heading offset is calibrated once; ongoing drift correction is not
+#   implemented yet.
+#
+# TODO: implement drift correction. this is a later consideration.
 # =============================================================================
 # Brief:
-#
+#   Combines GNSS position and IMU yaw to publish the rover's geographic pose.
+#   Calibrates the IMU heading offset from straight-line GNSS displacement,
+#   reports an unknown heading as NaN until calibrated, and suppresses pose
+#   updates when the last valid GNSS fix is too old.
 # =============================================================================
 # Subscribes to:
 #   '/imu' (std_msgs/Float32)
@@ -132,7 +154,8 @@ class Localization(Node):
         # This could be called from some explicit initialization event.
         # TODO: Validate that this resets reference pos if our imu changes too much.
         if self.init_pos is None or (
-            (self.imu_ref is not None)
+            self.imu_ref is not None
+            and self.imu_raw is not None
             and abs(self.normalize_angle(self.imu_raw - self.imu_ref))
             > self.IMU_ERR_THRESH
         ):
