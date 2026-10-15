@@ -1,0 +1,6 @@
+{
+    "python.analysis.extraPaths": [
+        "./src/wr_commons"
+    ],
+    "python-envs.defaultEnvManager": "ms-python.python:system"
+}
