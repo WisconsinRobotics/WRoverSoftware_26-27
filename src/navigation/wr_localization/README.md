@@ -19,9 +19,9 @@ source install/setup.bash
 ros2 topic echo /pose
 ```
 
-The output should look like: TODO: verify this
+The pose should look like:
 ```
-x: 1.0
-y: 1.0
+x: 43.07
+y: -89.4
 theta: 1.0
 ```

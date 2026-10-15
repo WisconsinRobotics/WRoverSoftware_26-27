@@ -2,31 +2,13 @@
 # Background:
 #   The rover uses GNSS (Global Navigation Satellite System) measurements for
 #   geographic position and a CTRE Phoenix6 Pigeon2 IMU for yaw. GNSS provides
-#   longitude and latitude, while the IMU tracks changes in orientation. The
-#   IMU yaw needs an offset to align it with a geographic heading.
+#   longitude and latitude, while the IMU tracks changes in orientation.
 #
-#   This node establishes that offset from the direction of straight-line GNSS
-#   displacement, assuming the rover is moving forward. Calibration requires
-#   more than 20 meters of displacement by default. A change in IMU yaw of more
-#   than 20 degrees restarts the reference position on the next valid GNSS fix.
-#   (TODO restart reference position)
-#   Until calibrated, the published heading is NaN, which signals active
-#   navigation to drive straight so that localization can establish a heading.
-#
-#   After calibration, the offset is applied to subsequent IMU readings. The
-#   pose contains longitude and latitude in degrees and heading in radians,
-#   measured counterclockwise from east. Only valid GNSS fixes update position,
+#   Only valid GNSS fixes update position,
 #   and pose publication stops when the last valid fix becomes too old.
-#   The heading offset is calibrated once; ongoing drift correction is not
-#   implemented yet.
-#
-# TODO: implement drift correction. this is a later consideration.
 # =============================================================================
 # Brief:
 #   Combines GNSS position and IMU yaw to publish the rover's geographic pose.
-#   Calibrates the IMU heading offset from straight-line GNSS displacement,
-#   reports an unknown heading as NaN until calibrated, and suppresses pose
-#   updates when the last valid GNSS fix is too old.
 # =============================================================================
 # Subscribes to:
 #   '/imu' (std_msgs/Float32)
@@ -55,18 +37,16 @@
 #   '/pose' (geometry_msgs/Pose2D)
 #       Description:
 #           Publishes our geographic coordinates and heading as a pose.
-#       Format: TODO: Is this correctly documented?
-#           x: longitude (degrees)
-#           y: latitude (degrees)
+#       Format:
+#           x: latitude (degrees)
+#           y: longitude (degrees)
 #           theta: heading (radians)
 #       Example:
 #           x: 43.07
 #           y: -89.4
 #           theta: 39.2
 #       Notes:
-#           Theta can be a NaN! This means that localization is unsure of the
-#           robot's current heading, and this doubles as a signal to the nav
-#           node to move straight to imu correct. Also, theta should be CCW positive.
+#           Theta should be CCW positive.
 # =============================================================================
 
 import rclpy
@@ -82,15 +62,12 @@ from ublox_ubx_msgs.msg import UBXNavPVT, GpsFix
 class Localization(Node):
     UBX_DEG_SCALE = 1e-7
 
-    DEFAULT_OFF_DIST_THRESH = 20.0
-    IMU_ERR_THRESH = math.radians(20.0)
-
     GOOD_FIX_TYPES = [
         GpsFix.GPS_FIX_2D,
         GpsFix.GPS_FIX_3D,
         GpsFix.GPS_PLUS_DEAD_RECKONING,
     ]
-    GOOD_FIX_TIMEOUT = 2.0
+    GOOD_FIX_TIMEOUT = 5.0
 
     def __init__(self):
         super().__init__("localization")
@@ -99,17 +76,9 @@ class Localization(Node):
         self.init_pos = None
         self.pose = Pose2D(x=math.nan, y=math.nan, theta=math.nan)
 
-        self.imu_offset = None  # imu offset
         self.imu_raw = None  # last imu reading
-        self.imu_ref = None  # used for checking if the robot is actually going straight
 
         self.last_good_fix = Time(seconds=0, clock_type=self.get_clock().clock_type)
-
-        # Parameter(s)
-        self.declare_parameter("off_dist_thresh", self.DEFAULT_OFF_DIST_THRESH)
-        self.off_dist_threshold = (
-            self.get_parameter("off_dist_thresh").get_parameter_value().double_value
-        )
 
         # ---------------------------------------------------------------------
         # IMU Subscriber
@@ -136,12 +105,7 @@ class Localization(Node):
         self.get_logger().info("Started localization node.")
 
     def imu_callback(self, msg: Float32):
-        self.imu_raw = math.radians(msg.data)
-        if self.imu_ref is None:
-            self.imu_ref = self.imu_raw
-        if self.imu_offset is not None:
-            # TODO: Make sure that this heading has the correct sign.
-            self.pose.theta = self.normalize_angle(self.imu_raw - self.imu_offset)
+        self.pose.theta = math.radians(msg.data)
         self.publish_pose()
 
     def gnss_callback(self, msg: UBXNavPVT):
@@ -149,86 +113,26 @@ class Localization(Node):
         if not msg.gnss_fix_ok or msg.gps_fix.fix_type not in self.GOOD_FIX_TYPES:
             return
         self.last_good_fix = self.get_clock().now()
-        self.pose.x = msg.lon * self.UBX_DEG_SCALE
-        self.pose.y = msg.lat * self.UBX_DEG_SCALE
-        # This could be called from some explicit initialization event.
-        # TODO: Validate that this resets reference pos if our imu changes too much.
-        if self.init_pos is None or (
-            self.imu_ref is not None
-            and self.imu_raw is not None
-            and abs(self.normalize_angle(self.imu_raw - self.imu_ref))
-            > self.IMU_ERR_THRESH
-        ):
-            self.init_pos = self.get_pos()
-            self.imu_ref = self.imu_raw
-
-        dpos = self.geo_to_dpos(self.init_pos, self.get_pos())
-        # The IMU calibration triggers when more than 20 meters away. (By default)
-        if math.hypot(dpos.x, dpos.y) > self.off_dist_threshold and (
-            self.imu_raw is not None and self.imu_offset is None
-        ):
-            # Figure out imu offset.
-            self.imu_offset = self.normalize_angle(
-                self.imu_raw - math.atan2(dpos.y, dpos.x)
-            )
-            self.pose.theta = self.normalize_angle(self.imu_raw - self.imu_offset)
+        self.pose.x = msg.lat * self.UBX_DEG_SCALE
+        self.pose.y = msg.lon * self.UBX_DEG_SCALE
         self.publish_pose()
 
     def publish_pose(self):
         """Publish our current pose to /pose."""
-        # Pose CAN publish a nan theta.
-        # This must be accounted for by all of /pose's subscribers.
         since_last_good_fix = (
             self.get_clock().now() - self.last_good_fix
         ).nanoseconds * 1e-9
         if (
             not math.isnan(self.pose.x)
             and not math.isnan(self.pose.y)
+            and not math.isnan(self.pose.theta)
             and since_last_good_fix < self.GOOD_FIX_TIMEOUT
         ):
             self.pose_publisher_.publish(self.pose)
 
     def get_pos(self) -> Point:
-        """Get position of robot as a Point."""
+        """Get position as a Point with x=latitude and y=longitude in degrees."""
         return Point(x=self.pose.x, y=self.pose.y)
-
-    def geo_to_dpos(self, start: Point, end: Point) -> Point:
-        """
-        Takes two different geographic coordinates and spits out a difference in meters.
-        There is an error of approximately 1-3m depending on direction after 1km of travel.
-        """
-        EARTH_RADIUS = 6371000.0
-
-        dlat = math.radians(end.y - start.y)
-        dlon = math.radians(end.x - start.x)
-        # Latitude midpoint
-        mid_lat = math.radians((start.y + end.y) / 2)
-        return Point(x=dlon * EARTH_RADIUS * math.cos(mid_lat), y=dlat * EARTH_RADIUS)
-
-    # TODO: Should we use this version instead? Currently unused.
-    def geo_to_dpos_wgs84(self, start: Point, end: Point) -> Point:
-        """
-        Takes two different geographic coordinates and spits out a difference in meters.
-        This version of geo_to_dpos takes into account that the Earth is more like an
-        oblate spheroid, hence some slightly confusing math to compute effective radii along
-        the meridional and transverse planes is included. (How the derivation for these radii works
-        is beyond me.)
-
-        This version is more accurate than `geo_to_dpos`, having millimeters of error after 1km of travel.
-        """
-        a = 6378137.0  # semi-major axis in meters
-        e2 = 0.00669437999014  # first eccentricity squared
-
-        mid_lat = math.radians((start.y + end.y) / 2.0)
-        dlat = self.normalize_angle(math.radians(end.y - start.y))
-        dlon = self.normalize_angle(math.radians(end.x - start.x))
-
-        # What the fuck?
-        denom = math.sqrt(1.0 - e2 * math.sin(mid_lat) ** 2)
-        M = a * (1.0 - e2) / (denom**3)  # Meridional (y)
-        N = a / denom  # Transverse (x)
-
-        return Point(x=dlon * N * math.cos(mid_lat), y=dlat * M)
 
     def normalize_angle(self, angle: float) -> float:
         """Binds the angle from -pi to pi."""
