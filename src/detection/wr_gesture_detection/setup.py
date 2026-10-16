@@ -22,6 +22,8 @@ setup(
         ],
     },
     entry_points={
-        "console_scripts": [],
+        "console_scripts": [
+            'gesture_detection = wr_gesture_detection.gesture_detection:main'
+        ],
     },
 )
