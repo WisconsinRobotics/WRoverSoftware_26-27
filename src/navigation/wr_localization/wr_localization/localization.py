@@ -4,8 +4,8 @@
 #   geographic position and a CTRE Phoenix6 Pigeon2 IMU for yaw. GNSS provides
 #   longitude and latitude, while the IMU tracks changes in orientation.
 #
-#   Only valid GNSS fixes update position,
-#   and pose publication stops when the last valid fix becomes too old.
+#   Only valid GNSS fixes update position. Pose publication stops when
+#   either the last valid fix or the last IMU update becomes too old.
 # =============================================================================
 # Brief:
 #   Combines GNSS position and IMU yaw to publish the rover's geographic pose.
@@ -51,7 +51,6 @@
 
 import rclpy
 import math
-from rclpy.time import Time
 from rclpy.node import Node
 from std_msgs.msg import Float32
 from geometry_msgs.msg import Point, Pose2D
@@ -68,6 +67,7 @@ class Localization(Node):
         GpsFix.GPS_PLUS_DEAD_RECKONING,
     ]
     GOOD_FIX_TIMEOUT = 5.0
+    GOOD_IMU_TIMEOUT = 2.0
 
     def __init__(self):
         super().__init__("localization")
@@ -76,9 +76,8 @@ class Localization(Node):
         self.init_pos = None
         self.pose = Pose2D(x=math.nan, y=math.nan, theta=math.nan)
 
-        self.imu_raw = None  # last imu reading
-
-        self.last_good_fix = Time(seconds=0, clock_type=self.get_clock().clock_type)
+        self.last_good_fix = None
+        self.last_imu = None
 
         # ---------------------------------------------------------------------
         # IMU Subscriber
@@ -105,12 +104,21 @@ class Localization(Node):
         self.get_logger().info("Started localization node.")
 
     def imu_callback(self, msg: Float32):
+        if not math.isfinite(msg.data):
+            return
         self.pose.theta = math.radians(msg.data)
+        self.last_imu = self.get_clock().now()
         self.publish_pose()
 
     def gnss_callback(self, msg: UBXNavPVT):
         # Message might not have the information we want.
-        if not msg.gnss_fix_ok or msg.gps_fix.fix_type not in self.GOOD_FIX_TYPES:
+        if (
+            not msg.gnss_fix_ok
+            or msg.gps_fix.fix_type not in self.GOOD_FIX_TYPES
+            or msg.invalid_llh
+            or not math.isfinite(msg.lat)
+            or not math.isfinite(msg.lon)
+        ):
             return
         self.last_good_fix = self.get_clock().now()
         self.pose.x = msg.lat * self.UBX_DEG_SCALE
@@ -118,15 +126,15 @@ class Localization(Node):
         self.publish_pose()
 
     def publish_pose(self):
-        """Publish our current pose to /pose."""
-        since_last_good_fix = (
-            self.get_clock().now() - self.last_good_fix
-        ).nanoseconds * 1e-9
+        """Publish our current pose while both GNSS and IMU updates are fresh."""
+        if None in (self.last_good_fix, self.last_imu):
+            return
+        now = self.get_clock().now()
+        since_last_good_fix = (now - self.last_good_fix).nanoseconds * 1e-9
+        since_last_imu = (now - self.last_imu).nanoseconds * 1e-9
         if (
-            not math.isnan(self.pose.x)
-            and not math.isnan(self.pose.y)
-            and not math.isnan(self.pose.theta)
-            and since_last_good_fix < self.GOOD_FIX_TIMEOUT
+            since_last_good_fix < self.GOOD_FIX_TIMEOUT
+            and since_last_imu < self.GOOD_IMU_TIMEOUT
         ):
             self.pose_publisher_.publish(self.pose)
 

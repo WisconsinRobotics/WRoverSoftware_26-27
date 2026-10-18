@@ -86,6 +86,8 @@ class Imu(Node):
         # ---------------------------------------------------------------------
 
         self.yaw_signal.refresh()
+        if not self.yaw_signal.status.is_ok():
+            return
 
         # ---------------------------------------------------------------------
         # Read yaw in degrees

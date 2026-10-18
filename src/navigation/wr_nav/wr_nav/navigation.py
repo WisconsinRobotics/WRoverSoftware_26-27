@@ -42,21 +42,21 @@
 #       Description:
 #           Sets the current navigation mode.
 #       Example:
-#           0 (IDLE)
+#           0 (STOP)
 #           2 (TRACKING)
 #           4 (GNSS_TARGET)
 #           5 (FOLLOW_3D)
-#   '/person' (geometry_msgs/Point)
+#   '/person' (detection/.../Person)
 #       Description:
 #           Gets the astronaut's position relative to a forward-facing camera.
 #       Format:
-#           x: right (meters)
-#           y: down (meters)
-#           z: forward (meters)
+#           position.x: right (meters)
+#           position.y: down (meters, ignored)
+#           position.z: forward (meters)
+#           gesture: observed gesture code (ignored for now)
 #       Example:
-#           x: 0.0
-#           y: 0.0
-#           z: 2.0
+#           position: {x: 0.0, y: 0.0, z: 2.0}
+#           gesture: 1
 #
 # =============================================================================
 # Publishes to:
@@ -80,6 +80,8 @@ from enum import Enum
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray, Int32
 from geometry_msgs.msg import Point, Pose2D
+from wr_gesture_detection.Person import Person
+from wr_gesture_detection.gesture import Gesture
 
 
 class NavModes(Enum):
@@ -158,7 +160,11 @@ class Nav(Node):
             Int32, "/nav_mode", self.nav_mode_callback, 10
         )
         self.person_subscriber_ = self.create_subscription(
-            Point, "/person", self.person_callback, 10
+            # Person, "/person", self.person_callback, 10
+            Point,
+            "/person",
+            self.person_callback,
+            10,
         )
 
         # ---------------------------------------------------------------------
@@ -213,8 +219,11 @@ class Nav(Node):
             return
         self.change_mode(mode)
 
+    # TODO: Make person a message type so that this can work.
+    # def person_callback(self, msg: Person):
     def person_callback(self, msg: Point):
-        self.person_target = msg
+        # self.person_target = msg
+        self.person_target = Person(msg, Gesture.NONE)
         self.last_person = self.get_clock().now()
 
     def target_callback(self, msg: Point):
@@ -246,7 +255,8 @@ class Nav(Node):
             return
 
         # x is probably cw
-        err = math.atan2(-self.person_target.x, self.person_target.z)
+        pos = self.person_target.position
+        err = math.atan2(-pos.x, pos.z)
         rot = self.clamp(self.kp_rot * err, -1.0, 1.0)
         self.publish_drive_helper(0.0, 0.0, rot)
 
@@ -261,9 +271,7 @@ class Nav(Node):
         dpos = self.geo_to_dpos(Point(x=self.pose.x, y=self.pose.y), self.gnss_target)
         dist = math.hypot(dpos.x, dpos.y)
 
-        if dist < self.dist_tolerance:  # Close enough to target.
-            self.change_mode(NavModes.STOP)
-            self.gnss_target = None
+        if dist < self.dist_tolerance:
             self.publish_drive_helper(0.0, 0.0, 0.0)
             return
 
@@ -289,8 +297,8 @@ class Nav(Node):
             return
 
         # x is right, z is forward.
-        right = self.person_target.x
-        forward = self.person_target.z
+        right = self.person_target.position.x
+        forward = self.person_target.position.z
 
         if math.hypot(right, forward) < self.dist_tolerance:
             self.publish_drive_helper(0.0, 0.0, 0.0)
@@ -310,12 +318,19 @@ class Nav(Node):
             self.last_dance_controls = (0.0, 0.0, 0.0)
         self.mode = mode
 
-    def publish_drive_helper(self, fwd: float, swerve: float, rot: float):
+    def publish_drive_helper(self, fwd: float, strafe: float, rot: float):
         """Publish swerve drive controls to /swerve."""
-        arr = Float32MultiArray(data=[fwd, swerve, rot, 0.0])
+        arr = Float32MultiArray(data=[fwd, strafe, rot, 0.0])
         self.swerve_publisher_.publish(arr)
 
-    # The following two functions are borrowed code from localization.
+    def destroy_node(self):
+        """Publish zero drive before shutdown."""
+        try:
+            if self.context.ok():
+                self.publish_drive_helper(0.0, 0.0, 0.0)
+        finally:
+            super().destroy_node()
+
     def geo_to_dpos(self, start: Point, end: Point) -> Point:
         """
         Takes two different geographic coordinates and spits out a difference in meters.
