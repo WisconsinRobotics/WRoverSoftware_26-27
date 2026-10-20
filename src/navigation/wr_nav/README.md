@@ -1,4 +1,4 @@
-This node publishes rover motion commands to /swerve at 10 Hz for GNSS navigation, person tracking, and 3D targeting. It starts in STOP mode and can be changed by publishing to /nav_mode.
+This node publishes rover motion commands to /swerve at 10 Hz for traversal (GNSS), approach (3D), and astronaut tracking. It starts in STOP mode and can be changed by publishing to /nav_mode.
 
 Usage example:
 
@@ -15,7 +15,7 @@ source install/setup.bash
 ros2 run wr_nav nav
 ```
 
-3. In another terminal, source the workspace, set a GNSS target, and select GNSS navigation:
+3. In another terminal, source the workspace, set a GNSS target, and select traversal mode:
 
 ```bash
 source install/setup.bash

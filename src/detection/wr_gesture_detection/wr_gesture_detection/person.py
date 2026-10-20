@@ -31,9 +31,10 @@ class Person:
                 6. Give
     """
 
-    def __init__(self, position: Point, gesture: Gesture):
+    def __init__(self, position: Point, gesture: Gesture, confidence: float):
         self._position = position
         self._gesture = gesture
+        self._confidence = confidence
 
     @property
     def position(self):
@@ -42,3 +43,7 @@ class Person:
     @property
     def gesture(self):
         return self._gesture
+
+    @property
+    def confidence(self):
+        return self._confidence

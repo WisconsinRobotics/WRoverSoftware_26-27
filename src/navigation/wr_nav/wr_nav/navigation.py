@@ -51,10 +51,10 @@
 #       Example:
 #           0 (STOP)
 #           2 (TRACKING)
-#           4 (GNSS_TARGET)
-#           5 (TARGET_3D)
+#           4 (TRAVERSAL)
+#           5 (APPROACH)
 #           6 (FOLLOWING)
-#   '/person' (wr_gesture_detection/Person)
+#   '/person' (wr_detection_msgs/Person)
 #       Description:
 #           Gets the astronaut's position relative to a forward-facing camera.
 #       Format:
@@ -89,8 +89,7 @@ from enum import Enum
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray, Int32
 from geometry_msgs.msg import Point, Pose2D
-from wr_gesture_detection.Person import Person
-from wr_gesture_detection.gesture import Gesture
+from wr_detection_msgs.msg import Person
 
 
 class NavModes(Enum):
@@ -98,8 +97,8 @@ class NavModes(Enum):
     DANCE = 1
     TRACKING = 2
     FINDING = 3
-    GNSS_TARGET = 4
-    TARGET_3D = 5
+    TRAVERSAL = 4
+    APPROACH = 5
     FOLLOWING = 6
 
 
@@ -111,12 +110,13 @@ class Nav(Node):
     DANCE_LIMIT = 0.3  # maximum value to use for dancing
     GOOD_POSE_TIMEOUT = 1.0
     GOOD_PERSON_TIMEOUT = 1.0
-    GOOD_TARGET_3D_TIMEOUT = 1.0
+    GOOD_APPROACH_TIMEOUT = 1.0
+    GOOD_CONF_LEVEL = 0.60
     # TODO: should this be a rotation counter instead?
     FINDING_TIMEOUT = 10.0
 
-    GNSS_TARGET_SPEED = 0.3
-    TARGET_3D_SPEED = 0.3
+    TRAVERSAL_SPEED = 0.3
+    APPROACH_SPEED = 0.3
     FINDING_ROT = 0.3
     FAR_PERSON_CENTER_TOLERANCE = 40.0
     FAR_PERSON_ROTATION_KP = 0.005
@@ -125,16 +125,16 @@ class Nav(Node):
         super().__init__("nav")
 
         self.mode = NavModes.STOP  # not using change_mode is okay here
-        self.gnss_target = None
+        self.traversal_target = None
         self.person_target = None
-        self.target_3d = None
+        self.approach_target = None
         self.last_dance_controls = (0.0, 0.0, 0.0)
 
         self.pose = None
 
         self.last_pose = None
         self.last_person = None
-        self.last_target_3d = None
+        self.last_approach_target = None
         # Thankfully we don't NEED to set this one to None.
         self.last_mode_change = Time(seconds=0, clock_type=self.get_clock().clock_type)
 
@@ -167,11 +167,11 @@ class Nav(Node):
         # Target Subscribers
         # ---------------------------------------------------------------------
 
-        self.target_subscriber_ = self.create_subscription(
-            Point, "/target_gnss", self.target_callback, 10
+        self.traversal_target_subscriber_ = self.create_subscription(
+            Point, "/target_gnss", self.traversal_target_callback, 10
         )
-        self.target_3d_subscriber_ = self.create_subscription(
-            Point, "/target_3d", self.target_3d_callback, 10
+        self.approach_target_subscriber_ = self.create_subscription(
+            Point, "/target_3d", self.approach_target_callback, 10
         )
 
         # ---------------------------------------------------------------------
@@ -182,11 +182,7 @@ class Nav(Node):
             Int32, "/nav_mode", self.nav_mode_callback, 10
         )
         self.person_subscriber_ = self.create_subscription(
-            # Person, "/person", self.person_callback, 10
-            Point,
-            "/person",
-            self.person_callback,
-            10,
+            Person, "/person", self.person_callback, 10
         )
 
         # ---------------------------------------------------------------------
@@ -207,15 +203,12 @@ class Nav(Node):
         self.pose = msg
 
     def main_timer_callback(self):
-        if self.mode == NavModes.GNSS_TARGET:
+        if self.mode == NavModes.TRAVERSAL:
             if self.last_pose is None or self.pose is None:
                 self.publish_drive_helper(0.0, 0.0, 0.0)
                 return
             # In case localization fails...
-            since_last_pose = (
-                self.get_clock().now() - self.last_pose
-            ).nanoseconds * 1e-9
-            if since_last_pose > self.GOOD_POSE_TIMEOUT:
+            if self.has_timed_out(self.last_pose, self.GOOD_POSE_TIMEOUT):
                 self.get_logger().warning("wr_nav: no pose received in time, idling.")
                 # Ideally, navigation should never change its own mode.
                 # This should be passed to state machine.
@@ -229,10 +222,10 @@ class Nav(Node):
                 self.do_tracking()
             case NavModes.FINDING:
                 self.do_finding()
-            case NavModes.GNSS_TARGET:
-                self.do_gnss_target()
-            case NavModes.TARGET_3D:
-                self.do_3d_target()
+            case NavModes.TRAVERSAL:
+                self.do_traversal()
+            case NavModes.APPROACH:
+                self.do_approach()
             case NavModes.FOLLOWING:
                 self.do_following()
 
@@ -245,29 +238,23 @@ class Nav(Node):
             return
         self.change_mode(mode)
 
-    # TODO: Make person a message type so that this can work.
-    # def person_callback(self, msg: Person):
-    def person_callback(self, msg: Point):
-        # self.person_target = msg
-        self.person_target = Person(msg, Gesture.NONE)
+    def person_callback(self, msg: Person):
+        self.person_target = msg
         self.last_person = self.get_clock().now()
 
-    def target_callback(self, msg: Point):
-        self.gnss_target = msg
+    def traversal_target_callback(self, msg: Point):
+        self.traversal_target = msg
 
-    def target_3d_callback(self, msg: Point):
-        self.target_3d = msg
-        self.last_target_3d = self.get_clock().now()
+    def approach_target_callback(self, msg: Point):
+        self.approach_target = msg
+        self.last_approach_target = self.get_clock().now()
 
     def do_finding(self):
         self.publish_drive_helper(0.0, 0.0, self.FINDING_ROT)
         # TODO: What to do here? What to pass to state machine?
         # Also, even if the robot finds the person, unless the state machine
         # updates the mode itself, the timeout will trigger as well.
-        since_last_mode_change = (
-            self.get_clock().now() - self.last_mode_change
-        ).nanoseconds * 1e-9
-        if since_last_mode_change > self.FINDING_TIMEOUT:
+        if self.has_timed_out(self.last_mode_change, self.FINDING_TIMEOUT):
             self.get_logger().warning("wr_nav: exceeding finding timeout.")
 
     # TODO: Decide if we should use this...
@@ -284,34 +271,30 @@ class Nav(Node):
     # TODO: This probably doesn't work
     def do_tracking(self):
         """Rotate in place to face the person relative to the camera."""
-        if self.person_target is None or self.last_person is None:
-            self.publish_drive_helper(0.0, 0.0, 0.0)
-            return
-
-        since_last_person = (
-            self.get_clock().now() - self.last_person
-        ).nanoseconds * 1e-9
-        if since_last_person > self.GOOD_PERSON_TIMEOUT:
+        if self.person_target is None or self.has_timed_out(
+            self.last_person, self.GOOD_PERSON_TIMEOUT
+        ):
             self.publish_drive_helper(0.0, 0.0, 0.0)
             return
 
         # x is probably cw
         pos = self.person_target.position
-        if (pos.z < 0.0):
+        if pos.z < 0.0:
             self.publish_drive_helper(0.0, 0.0, 0.0)
+            return
         err = math.atan2(-pos.x, pos.z)
         rot = self.clamp(self.kp_rot * err, -1.0, 1.0)
         self.publish_drive_helper(0.0, 0.0, rot)
 
-    def do_gnss_target(self):
+    def do_traversal(self):
         """Navigates to a GNSS target by first facing the target and moving towards it."""
-        if self.gnss_target is None:  # This should NEVER occur, but just in case...
-            self.get_logger().warning(
-                "wr_nav: using gnss target mode without a target."
-            )
-            self.change_mode(NavModes.STOP)
+        if self.traversal_target is None:
+            self.get_logger().warning("wr_nav: using traversal mode without a target.")
+            self.publish_drive_helper(0.0, 0.0, 0.0)
             return
-        dpos = self.geo_to_dpos(Point(x=self.pose.x, y=self.pose.y), self.gnss_target)
+        dpos = self.geo_to_dpos(
+            Point(x=self.pose.x, y=self.pose.y), self.traversal_target
+        )
         dist = math.hypot(dpos.x, dpos.y)
 
         if dist < self.dist_tolerance:
@@ -322,45 +305,35 @@ class Nav(Node):
         err = self.normalize_angle(math.atan2(dpos.y, dpos.x) - self.pose.theta)
         rot = self.clamp(self.kp_rot * err, -1.0, 1.0)
         if abs(err) < self.heading_tolerance:
-            self.publish_drive_helper(self.GNSS_TARGET_SPEED, 0.0, rot)
+            self.publish_drive_helper(self.TRAVERSAL_SPEED, 0.0, rot)
         else:
             self.publish_drive_helper(0.0, 0.0, rot)
 
     def do_following(self):
-        if self.person_target is None or self.last_person is None:
-            self.publish_drive_helper(0.0, 0.0, 0.0)
-            return
-        since_last_person = (
-            self.get_clock().now() - self.last_person
-        ).nanoseconds * 1e-9
-        if since_last_person > self.GOOD_PERSON_TIMEOUT:
+        if self.person_target is None or self.has_timed_out(
+            self.last_person, self.GOOD_PERSON_TIMEOUT
+        ):
             self.publish_drive_helper(0.0, 0.0, 0.0)
             return
 
         pos = self.person_target.position
-        # Using getattr since Person doesn't have far just yet.
-        if getattr(self.person_target, "far", False):
+        if self.person_target.confidence < self.GOOD_CONF_LEVEL:
             rot = self.clamp(-self.FAR_PERSON_ROTATION_KP * pos.x, -1.0, 1.0)
-            self.publish_drive_helper(
-                self.TARGET_3D_SPEED
-                if abs(pos.x) < self.FAR_PERSON_CENTER_TOLERANCE else 0.0,
-                0.0, rot)
+            if abs(pos.x) < self.FAR_PERSON_CENTER_TOLERANCE:
+                self.publish_drive_helper(self.APPROACH_SPEED, 0.0, rot)
+            else:
+                self.publish_drive_helper(0.0, 0.0, rot)
         else:
             self.drive_to_3d_target(pos)
 
-    def do_3d_target(self):
-        if self.target_3d is None or self.last_target_3d is None:
+    def do_approach(self):
+        if self.approach_target is None or self.has_timed_out(
+            self.last_approach_target, self.GOOD_APPROACH_TIMEOUT
+        ):
             self.publish_drive_helper(0.0, 0.0, 0.0)
             return
 
-        since_last_target = (
-            self.get_clock().now() - self.last_target_3d
-        ).nanoseconds * 1e-9
-        if since_last_target > self.GOOD_TARGET_3D_TIMEOUT:
-            self.publish_drive_helper(0.0, 0.0, 0.0)
-            return
-
-        self.drive_to_3d_target(self.target_3d)
+        self.drive_to_3d_target(self.approach_target)
 
     # TODO: See if this works, just a rough draft of a function
     def drive_to_3d_target(self, target: Point):
@@ -376,7 +349,7 @@ class Nav(Node):
         err = math.atan2(-right, forward)
         rot = self.clamp(self.kp_rot * err, -1.0, 1.0)
         if abs(err) < self.heading_tolerance:
-            self.publish_drive_helper(self.TARGET_3D_SPEED, 0.0, rot)
+            self.publish_drive_helper(self.APPROACH_SPEED, 0.0, rot)
         else:
             self.publish_drive_helper(0.0, 0.0, rot)
 
@@ -412,6 +385,13 @@ class Nav(Node):
         # Latitude midpoint
         mid_lat = math.radians((start.x + end.x) / 2)
         return Point(x=dlon * EARTH_RADIUS * math.cos(mid_lat), y=dlat * EARTH_RADIUS)
+
+    def has_timed_out(self, last_update: Time | None, timeout: float) -> bool:
+        """Checks if some update has exceeded its own timeout."""
+        if last_update is None:
+            return True
+        since_last_update = (self.get_clock().now() - last_update).nanoseconds * 1e-9
+        return since_last_update > timeout
 
     def normalize_angle(self, angle: float) -> float:
         """Binds the angle from -pi to pi."""

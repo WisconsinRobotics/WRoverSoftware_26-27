@@ -26,20 +26,20 @@ from std_msgs.msg import Float32, Int32
 
 
 class Distance(Node):
-    GNSS_TARGET_MODE = 4
+    TRAVERSAL_MODE = 4
 
     def __init__(self):
         super().__init__("distance")
 
         self.pose = None
-        self.gnss_target = None
+        self.traversal_target = None
         self.nav_mode = 0
 
         self.localization_subscriber_ = self.create_subscription(
             Pose2D, "/localization", self.localization_callback, 10
         )
-        self.target_subscriber_ = self.create_subscription(
-            Point, "/target_gnss", self.target_callback, 10
+        self.traversal_target_subscriber_ = self.create_subscription(
+            Point, "/target_gnss", self.traversal_target_callback, 10
         )
         self.nav_mode_subscriber_ = self.create_subscription(
             Int32, "/nav_mode", self.nav_mode_callback, 10
@@ -54,8 +54,8 @@ class Distance(Node):
         self.pose = msg
         self.publish_distance()
 
-    def target_callback(self, msg: Point):
-        self.gnss_target = msg
+    def traversal_target_callback(self, msg: Point):
+        self.traversal_target = msg
         self.publish_distance()
 
     def nav_mode_callback(self, msg: Int32):
@@ -64,12 +64,14 @@ class Distance(Node):
 
     def publish_distance(self):
         if (
-            self.nav_mode != self.GNSS_TARGET_MODE
+            self.nav_mode != self.TRAVERSAL_MODE
             or self.pose is None
-            or self.gnss_target is None
+            or self.traversal_target is None
         ):
             return
-        dpos = self.geo_to_dpos(Point(x=self.pose.x, y=self.pose.y), self.gnss_target)
+        dpos = self.geo_to_dpos(
+            Point(x=self.pose.x, y=self.pose.y), self.traversal_target
+        )
         self.distance_publisher_.publish(Float32(data=math.hypot(dpos.x, dpos.y)))
 
     def geo_to_dpos(self, start: Point, end: Point) -> Point:
