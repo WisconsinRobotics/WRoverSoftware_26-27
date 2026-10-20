@@ -1,4 +1,4 @@
-This node publishes rover motion commands to /swerve at 10 Hz for GNSS navigation and person following. It starts in STOP mode and can be changed by publishing to /nav_mode.
+This node publishes rover motion commands to /swerve at 10 Hz for GNSS navigation, person tracking, and 3D targeting. It starts in STOP mode and can be changed by publishing to /nav_mode.
 
 Usage example:
 
