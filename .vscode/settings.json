@@ -1,7 +1,7 @@
 {
     "python.analysis.extraPaths": [
         "./src/wr_commons",
-        "./src/detection/wr_gesture_detection"
+        "./install/wr_detection_msgs/local/lib/python3.10/dist-packages"
     ],
     "python-envs.defaultEnvManager": "ms-python.python:system"
 }
