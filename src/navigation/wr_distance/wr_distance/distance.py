@@ -2,7 +2,7 @@
 # TODO
 # =============================================================================
 # Subscribes to:
-#   '/localization' (geometry_msgs/Pose2D)
+#   '/pose' (geometry_msgs/Pose2D)
 #       x: latitude (degrees)
 #       y: longitude (degrees)
 #       theta: ignored
@@ -36,7 +36,7 @@ class Distance(Node):
         self.nav_mode = 0
 
         self.localization_subscriber_ = self.create_subscription(
-            Pose2D, "/localization", self.localization_callback, 10
+            Pose2D, "/pose", self.localization_callback, 10
         )
         self.traversal_target_subscriber_ = self.create_subscription(
             Point, "/target_gnss", self.traversal_target_callback, 10

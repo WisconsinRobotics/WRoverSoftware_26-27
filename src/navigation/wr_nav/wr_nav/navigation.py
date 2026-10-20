@@ -58,14 +58,15 @@
 #       Description:
 #           Gets the astronaut's position relative to a forward-facing camera.
 #       Format:
-#           position.x: right (meters OR pixels when far)
-#           position.y: down (meters, ignored)
+#           position.x: right (meters, or pixels from image center when uncertain)
+#           position.y: ignored
 #           position.z: forward (meters)
-#           gesture: observed gesture code (ignored for now)
-#           far: indication for when using pixels instead of meters
+#           gesture: ignored
+#           confidence: confidence of person, determines when meters or pixels are used
 #       Example:
 #           position: {x: 0.0, y: 0.0, z: 2.0}
 #           gesture: 1
+#           confidence: 0.9
 #
 # =============================================================================
 # Publishes to:
@@ -126,8 +127,8 @@ class Nav(Node):
 
         self.mode = NavModes.STOP  # not using change_mode is okay here
         self.traversal_target = None
-        self.person_target = None
         self.approach_target = None
+        self.person = None
         self.last_dance_controls = (0.0, 0.0, 0.0)
 
         self.pose = None
@@ -239,7 +240,7 @@ class Nav(Node):
         self.change_mode(mode)
 
     def person_callback(self, msg: Person):
-        self.person_target = msg
+        self.person = msg
         self.last_person = self.get_clock().now()
 
     def traversal_target_callback(self, msg: Point):
@@ -271,14 +272,21 @@ class Nav(Node):
     # TODO: This probably doesn't work
     def do_tracking(self):
         """Rotate in place to face the person relative to the camera."""
-        if self.person_target is None or self.has_timed_out(
+        if self.person is None or self.has_timed_out(
             self.last_person, self.GOOD_PERSON_TIMEOUT
         ):
+            self.get_logger().warning("wr_nav: cannot find person.")
+            self.publish_drive_helper(0.0, 0.0, 0.0)
+            return
+        elif self.person.confidence < self.GOOD_CONF_LEVEL:
+            self.get_logger().warning(
+                f"wr_nav: {self.person.confidence} confidence is not good enough to track"
+            )
             self.publish_drive_helper(0.0, 0.0, 0.0)
             return
 
         # x is probably cw
-        pos = self.person_target.position
+        pos = self.person.position
         if pos.z < 0.0:
             self.publish_drive_helper(0.0, 0.0, 0.0)
             return
@@ -310,14 +318,14 @@ class Nav(Node):
             self.publish_drive_helper(0.0, 0.0, rot)
 
     def do_following(self):
-        if self.person_target is None or self.has_timed_out(
+        if self.person is None or self.has_timed_out(
             self.last_person, self.GOOD_PERSON_TIMEOUT
         ):
             self.publish_drive_helper(0.0, 0.0, 0.0)
             return
 
-        pos = self.person_target.position
-        if self.person_target.confidence < self.GOOD_CONF_LEVEL:
+        pos = self.person.position
+        if self.person.confidence < self.GOOD_CONF_LEVEL:
             rot = self.clamp(-self.FAR_PERSON_ROTATION_KP * pos.x, -1.0, 1.0)
             if abs(pos.x) < self.FAR_PERSON_CENTER_TOLERANCE:
                 self.publish_drive_helper(self.APPROACH_SPEED, 0.0, rot)
