@@ -24,10 +24,23 @@ from rclpy.node import Node
 from geometry_msgs.msg import Point, Pose2D
 from std_msgs.msg import Float32, Int32
 
+TRAVERSAL_MODE = 4
+EARTH_RADIUS = 6371000.0
+
+
+def geo_to_dpos(start: Point, end: Point) -> Point:
+    """
+    Takes two different geographic coordinates and spits out a difference in meters.
+    There is an error of approximately 1-3m depending on direction after 1km of travel.
+    """
+    dlat = math.radians(end.x - start.x)
+    dlon = math.radians(end.y - start.y)
+
+    mid_lat = math.radians((start.x + end.x) / 2)
+    return Point(x=dlon * EARTH_RADIUS * math.cos(mid_lat), y=dlat * EARTH_RADIUS)
+
 
 class Distance(Node):
-    TRAVERSAL_MODE = 4
-
     def __init__(self):
         super().__init__("distance")
 
@@ -64,28 +77,13 @@ class Distance(Node):
 
     def publish_distance(self):
         if (
-            self.nav_mode != self.TRAVERSAL_MODE
+            self.nav_mode != TRAVERSAL_MODE
             or self.pose is None
             or self.traversal_target is None
         ):
             return
-        dpos = self.geo_to_dpos(
-            Point(x=self.pose.x, y=self.pose.y), self.traversal_target
-        )
+        dpos = geo_to_dpos(Point(x=self.pose.x, y=self.pose.y), self.traversal_target)
         self.distance_publisher_.publish(Float32(data=math.hypot(dpos.x, dpos.y)))
-
-    def geo_to_dpos(self, start: Point, end: Point) -> Point:
-        """
-        Takes two different geographic coordinates and spits out a difference in meters.
-        There is an error of approximately 1-3m depending on direction after 1km of travel.
-        """
-        EARTH_RADIUS = 6371000.0
-
-        dlat = math.radians(end.x - start.x)
-        dlon = math.radians(end.y - start.y)
-
-        mid_lat = math.radians((start.x + end.x) / 2)
-        return Point(x=dlon * EARTH_RADIUS * math.cos(mid_lat), y=dlat * EARTH_RADIUS)
 
 
 # =============================================================================

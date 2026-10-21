@@ -53,27 +53,26 @@ import rclpy
 import math
 from rclpy.node import Node
 from std_msgs.msg import Float32
-from geometry_msgs.msg import Point, Pose2D
+from geometry_msgs.msg import Pose2D
 
 from ublox_ubx_msgs.msg import UBXNavPVT, GpsFix
 
 
+UBX_DEG_SCALE = 1e-7
+
+GOOD_FIX_TYPES = [
+    GpsFix.GPS_FIX_2D,
+    GpsFix.GPS_FIX_3D,
+    GpsFix.GPS_PLUS_DEAD_RECKONING,
+]
+GOOD_FIX_TIMEOUT = 5.0
+GOOD_IMU_TIMEOUT = 2.0
+
+
 class Localization(Node):
-    UBX_DEG_SCALE = 1e-7
-
-    GOOD_FIX_TYPES = [
-        GpsFix.GPS_FIX_2D,
-        GpsFix.GPS_FIX_3D,
-        GpsFix.GPS_PLUS_DEAD_RECKONING,
-    ]
-    GOOD_FIX_TIMEOUT = 5.0
-    GOOD_IMU_TIMEOUT = 2.0
-
     def __init__(self):
         super().__init__("localization")
 
-        # This is NOT the initial position of the robot, this is just the position used for imu correction.
-        self.init_pos = None
         self.pose = Pose2D(x=math.nan, y=math.nan, theta=math.nan)
 
         self.last_good_fix = None
@@ -114,37 +113,26 @@ class Localization(Node):
         # Message might not have the information we want.
         if (
             not msg.gnss_fix_ok
-            or msg.gps_fix.fix_type not in self.GOOD_FIX_TYPES
+            or msg.gps_fix.fix_type not in GOOD_FIX_TYPES
             or msg.invalid_llh
             or not math.isfinite(msg.lat)
             or not math.isfinite(msg.lon)
         ):
             return
         self.last_good_fix = self.get_clock().now()
-        self.pose.x = msg.lat * self.UBX_DEG_SCALE
-        self.pose.y = msg.lon * self.UBX_DEG_SCALE
+        self.pose.x = msg.lat * UBX_DEG_SCALE
+        self.pose.y = msg.lon * UBX_DEG_SCALE
         self.publish_pose()
 
     def publish_pose(self):
         """Publish our current pose while both GNSS and IMU updates are fresh."""
-        if None in (self.last_good_fix, self.last_imu):
+        if self.last_good_fix is None or self.last_imu is None:
             return
         now = self.get_clock().now()
         since_last_good_fix = (now - self.last_good_fix).nanoseconds * 1e-9
         since_last_imu = (now - self.last_imu).nanoseconds * 1e-9
-        if (
-            since_last_good_fix < self.GOOD_FIX_TIMEOUT
-            and since_last_imu < self.GOOD_IMU_TIMEOUT
-        ):
+        if since_last_good_fix < GOOD_FIX_TIMEOUT and since_last_imu < GOOD_IMU_TIMEOUT:
             self.pose_publisher_.publish(self.pose)
-
-    def get_pos(self) -> Point:
-        """Get position as a Point with x=latitude and y=longitude in degrees."""
-        return Point(x=self.pose.x, y=self.pose.y)
-
-    def normalize_angle(self, angle: float) -> float:
-        """Binds the angle from -pi to pi."""
-        return math.atan2(math.sin(angle), math.cos(angle))
 
 
 # =============================================================================
