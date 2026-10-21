@@ -3,8 +3,8 @@ Utilities for preparing YOLO pose-estimation keypoints for gesture classificatio
 
 This module converts raw human-pose detections into a consistent feature
 representation suitable for input to a gesture-classification model. It
-normalizes joint positions relative to the detected person's shoulder midpoint
-and shoulder width, removes facial keypoints, and computes selected anatomical
+normalizes joint positions relative to the detected person's torso midpoint
+and torso height, removes facial keypoints, and computes selected anatomical
 angle features for the arms.
 
 The resulting feature vector contains normalized joint coordinates, keypoint
@@ -20,6 +20,9 @@ import numpy as np
 from numpy.typing import NDArray
 import warnings
 
+# Constants
+MIN_CONFIDENCE = 0.25
+
 
 def normalize_figure(
     keypoints: Keypoints,
@@ -28,8 +31,9 @@ def normalize_figure(
     """
     Normalize a person's pose relative to their shoulders.
 
-    The midpoint between the shoulders becomes (0, 0), and the
-    distance between the shoulders becomes 1.
+    The midpoint of the torso becomes (0, 0), and the distance between
+    the shoulder and hip midpoints becomes 1. The skeleton is rotated
+    such that the shoulder-to-hip vector aligns with the positive y-axis.
 
     Args:
         keypoints: Ultralytics Keypoints object.
@@ -52,41 +56,67 @@ def normalize_figure(
     points_xy = keypoints.xy[person_index].cpu().numpy()
     confidence = keypoints.conf[person_index].cpu().numpy()
 
-    # 2) Compute the shoulder midpoint position and shoulder distance.
-    #    All points will be scaled to be measurable in shoulder lengths
-    #    and positioned relative to the shoulder center.
+    # 1a) Verify that our keypoint data is reasonably accurate.
+    if np.any(confidence[[5, 6, 11, 12]] < MIN_CONFIDENCE):
+        return None
+
+    # 2) Compute the torso midpoint position and torso height.
+    #    All points will be scaled to be measurable in torso height
+    #    and positioned relative to the torso center.
     left_shoulder = points_xy[5]
     right_shoulder = points_xy[6]
 
-    center_x = (left_shoulder[0] + right_shoulder[0]) / 2
-    center_y = (left_shoulder[1] + right_shoulder[1]) / 2
+    left_hip = points_xy[11]
+    right_hip = points_xy[12]
 
-    shoulder_distance = np.sqrt(
-        (right_shoulder[0] - left_shoulder[0]) ** 2
-        + (right_shoulder[1] - left_shoulder[1]) ** 2
+    shoulder_center_x = (left_shoulder[0] + right_shoulder[0]) / 2
+    shoulder_center_y = (left_shoulder[1] + right_shoulder[1]) / 2
+
+    hip_center_x = (left_hip[0] + right_hip[0]) / 2
+    hip_center_y = (left_hip[1] + right_hip[1]) / 2
+
+    torso_height = np.hypot(
+        hip_center_x - shoulder_center_x,
+        hip_center_y - shoulder_center_y,
     )
 
-    # Shoulder distance of zero would lead to division by zero.
-    # Further, no gesture requires the figure to face 90 degrees from the camera.
+    center_x = (hip_center_x + shoulder_center_x) / 2
+    center_y = (hip_center_y + shoulder_center_y) / 2
+
+    # Torso height of zero would lead to division by zero.
+    # Further, no gesture would require this condition.
     # Thus it's safe to omit this frame.
-    if shoulder_distance < 1e-10:
+    if torso_height < 1e-10:
         return None
 
-    # 3) Normalize all data points.
-    normalized_x = (points_xy[:, 0] - center_x) / shoulder_distance
+    # 3) Normalize for camera roll.
+    rotation_angle = np.atan2(
+        hip_center_x - shoulder_center_x,
+        hip_center_y - shoulder_center_y,
+    )
 
-    normalized_y = (points_xy[:, 1] - center_y) / shoulder_distance
-
-    normalized = np.array(
+    rotation_matrix = np.array(
         [
-            normalized_x,
-            normalized_y,
-            confidence,
+            [np.cos(rotation_angle), -np.sin(rotation_angle)],
+            [np.sin(rotation_angle), np.cos(rotation_angle)],
         ]
     )
 
+    # 4) Normalize all data points.
+    normalized_xy = (points_xy - np.array((center_x, center_y))) / torso_height
+
+    # 5) Rotate all keypoints.
+    normalized_xy = normalized_xy @ rotation_matrix.T
+
+    normalized = np.vstack(
+        (
+            normalized_xy.T,
+            confidence,
+        )
+    )
+
     # Remove YOLO facial keypoints 0-4.
-    return normalized[:, 5:]
+    return normalized[:, 5:17]
 
 
 def compute_joint_angles(
@@ -113,6 +143,11 @@ def compute_joint_angles(
 
         Returns None if a required joint vector has near-zero magnitude.
     """
+
+    # 0) Ensure that the joints have reasonable confidence before computing
+    #    any angles.
+    if np.any(normalized_joints[2, :6] < MIN_CONFIDENCE):
+        return None
 
     # 1) Compute cos(theta) and sin(theta) for the right elbow.
     # 1a) Vectorize the right arm joints.
