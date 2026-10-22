@@ -1,5 +1,6 @@
 import math
 import heapq
+import numpy as np
 
 class AStar:
     possibleMoves = [
@@ -35,10 +36,10 @@ class AStar:
         (r1, c1) = currentNode
         (r2, c2) = neighborNode
 
-        distance = math.sqrt(math.pow((r2 - r1), 2) + math.pow((c2 - c1), 2))
+        distance = math.sqrt(math.pow((r2 - r1), 2) + math.pow((c2 - c1), 2)) * self.res
         dz = (self.terrain.get_elevation(r2, c2) - self.terrain.get_elevation(r1, c1))
 
-        return math.sqrt(math.pow(distance, 2) + math.pow(dz, 2)) * self.res
+        return math.sqrt(math.pow(distance, 2) + math.pow(dz, 2))
 
     def heuristic(self, currentNode, goalNode):
         (r1, c1) = currentNode
@@ -48,9 +49,9 @@ class AStar:
     
     def search(self, startNode, goalNode):
         if not self.in_bounds(*startNode) or not self.in_bounds(*goalNode):
-            return None
+            return None, None
         if not self.terrain.is_traversable(*startNode) or not self.terrain.is_traversable(*goalNode):
-            return None
+            return None, None
 
         costFromStart = np.full((self.rows, self.cols), np.inf)
         costFromStart[startNode] = 0.0
@@ -68,7 +69,8 @@ class AStar:
             if currentNode in finishedNodes:
                 continue
             if currentNode == goalNode:
-                return self.reconstruct_path(parentOf, currentNode)
+                path = self.reconstruct_path(parentOf, currentNode)
+                return path, costFromStart[goalNode]
 
             finishedNodes.add(currentNode)
 
@@ -85,7 +87,7 @@ class AStar:
                     priority = newCost + self.heuristic(neighborNode, goalNode)
                     heapq.heappush(frontier, (priority, tieBreaker, neighborNode))
 
-        return None
+        return None, None
 
     def reconstruct_path(self, parentOf, currentNode):
         path = [currentNode]
