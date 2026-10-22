@@ -16,15 +16,15 @@ class AstronautMission(StateChart):
         | tracking.to(finding, cond=is_person_lost)
     )
 
-    def is_person_found() -> bool:
-        return # function from detection to see if we found the astronaut
+    def is_person_found(self) -> bool:
+        return True # function from detection to see if we found the astronaut
 
-    def is_person_lost() -> bool:
-        return # function from detection to see if we can still see the person
+    def is_person_lost(self) -> bool:
+        return True # function from detection to see if we can still see the person
 
-    def follow_gesture() -> bool:
-        return # function from detection to see if the following gesture was made
+    def follow_gesture(self) -> bool:
+        return True # function from detection to see if the following gesture was made
 
-    def stay_gesture() -> bool:
-        return # function from detecttion to see if the stay gesture was made
+    def stay_gesture(self) -> bool:
+        return True # function from detecttion to see if the stay gesture was made
 
