@@ -157,7 +157,7 @@ def steer_helper(
 
 
 def has_timed_out(last_update: Time | None, timeout: float, now: Time) -> bool:
-    """Check whether an update is missing or older than the timeout in seconds."""
+    """Check if update has timed out or not."""
     if last_update is None:
         return True
     since_last_update = (now - last_update).nanoseconds * 1e-9

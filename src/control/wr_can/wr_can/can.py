@@ -65,6 +65,8 @@ import can
 import time
 import threading
 
+from can import Message
+
 # =============================================================================
 # VESC IDs
 # =============================================================================
@@ -250,7 +252,7 @@ class CANNode(Node):
 
         # ----- ROS -> CAN -----
 
-        self._pending: dict[tuple, can.Message] = {}
+        self._pending: dict[tuple, Message] = {}
         self._pending_lock = threading.Lock()
         self._pending_event = threading.Event()
 
@@ -432,7 +434,7 @@ class CANNode(Node):
     # CAN message processing
     # =========================================================================
 
-    def _process_can_message(self, msg):
+    def _process_can_message(self, msg: Message):
 
         arb_id = msg.arbitration_id
 
