@@ -9,7 +9,25 @@ class GNSSMission(StateChart):
 
     path = (
         default.to(traversal) 
-        | traversal.to(following)
-        | following.to(blink)
+        | traversal.to(following, cond=aruco_is_not_none)
+        | following.to(blink, cond=reached_aruco)
         | blink.to(default)
     )
+
+    "Conditional statements for state transition"
+    def aruco_is_not_none(self) -> bool:
+        return True # A function that tells us whether or not the aruco tag is not none
+
+    def reached_aruco(self) -> bool:
+        return True # A function that tells us that we are at the aruco tag
+
+
+    "Actions to be carried out during the state"
+    def on_traversal(self):
+        return None
+
+    def on_following(self):
+        return None
+
+    def on_blink(self):
+        return None

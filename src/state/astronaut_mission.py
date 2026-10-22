@@ -16,6 +16,7 @@ class AstronautMission(StateChart):
         | tracking.to(finding, cond=is_person_lost)
     )
 
+    "Conditional statements for state transition"
     def is_person_found(self) -> bool:
         return True # function from detection to see if we found the astronaut
 
@@ -28,3 +29,14 @@ class AstronautMission(StateChart):
     def stay_gesture(self) -> bool:
         return True # function from detecttion to see if the stay gesture was made
 
+    "Actions to be carried out during the state"
+    def on_following(self):
+        return None 
+
+    def on_tracking(self):
+        return None
+
+    def on_finding(self):
+        return None
+
+    # On default will be a more global command potentially declared in a main function
