@@ -129,7 +129,7 @@ def geo_to_dpos(start: Point, end: Point) -> Point:
 
 
 def normalize_angle(angle: float) -> float:
-    """Binds the angle from -pi to pi."""
+    """Binds the angle from [-pi, pi)."""
     return math.atan2(math.sin(angle), math.cos(angle))
 
 

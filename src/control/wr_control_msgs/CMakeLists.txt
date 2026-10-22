@@ -7,6 +7,8 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/CanReceiveSwerve.msg"
   "msg/CanReceiveArm.msg"
+  "msg/CanReceiveDrive.msg"
 )
 
+ament_export_dependencies(rosidl_default_runtime)
 ament_package()

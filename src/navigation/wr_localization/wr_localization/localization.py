@@ -1,23 +1,26 @@
 # =============================================================================
 # Background:
 #   The rover uses GNSS (Global Navigation Satellite System) measurements for
-#   geographic position and a CTRE Phoenix6 Pigeon2 IMU for yaw. GNSS provides
-#   longitude and latitude, while the IMU tracks changes in orientation.
+#   geographic position and odometry for yaw and velocity when available.
 #
-#   Only valid GNSS fixes update position. Pose publication stops when
-#   either the last valid fix or the last IMU update becomes too old.
+#   A Kalman filter estimates east/north position and velocity. GNSS corrects
+#   position and odometry corrects velocity, each weighted by its uncertainty.
+#   Pose publication stops when
+#   either the last valid fix or the last odometry update becomes too old.
 # =============================================================================
 # Brief:
-#   Combines GNSS position and IMU yaw to publish the rover's geographic pose.
+#   Combines GNSS and odometry to publish the rover's geographic pose.
 # =============================================================================
 # Subscribes to:
-#   '/imu' (std_msgs/Float32)
+#   '/odometry' (wr_navigation_msgs/OdometryState)
 #       Description:
-#           Raw Pigeon2 yaw in degrees, published at 100 Hz.
+#           Odometry yaw and body-frame velocity.
 #       Format:
-#           yaw (float32)
+#           yaw (float64)
+#           velocity (Point): x forward, y left, z zero, in m/s
+#           omega: yaw rate in rad/s, CCW positive
 #       Example:
-#           180.0
+#           3.14
 #   '/ubx_nav_pvt' (ublox_ubx_msgs/UBXNavPVT)
 #       Description:
 #           GNSS receiver data, including latitude and longitude data.
@@ -49,16 +52,21 @@
 #           Theta should be CCW positive.
 # =============================================================================
 
-import rclpy
 import math
+import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32
+from rclpy.time import Time
+from wr_navigation_msgs.msg import OdometryState
 from geometry_msgs.msg import Pose2D
 
 from ublox_ubx_msgs.msg import UBXNavPVT, GpsFix
 
+from wr_localization.filter import PositionKalmanFilter
+
 
 UBX_DEG_SCALE = 1e-7
+
+KALMAN_TIMESTEP = 0.05  # seconds, equivalent to 20 Hz
 
 GOOD_FIX_TYPES = [
     GpsFix.GPS_FIX_2D,
@@ -66,7 +74,20 @@ GOOD_FIX_TYPES = [
     GpsFix.GPS_PLUS_DEAD_RECKONING,
 ]
 GOOD_FIX_TIMEOUT = 5.0
-GOOD_IMU_TIMEOUT = 2.0
+GOOD_ODOM_TIMEOUT = 2.0
+
+
+def normalize_angle(angle: float) -> float:
+    """Binds the angle from -pi to pi, inclusive."""
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def has_timed_out(last_update: Time | None, timeout: float, now: Time) -> bool:
+    """Check whether an update is missing or older than the timeout in seconds."""
+    if last_update is None:
+        return True
+    since_last_update = (now - last_update).nanoseconds * 1e-9
+    return since_last_update > timeout
 
 
 class Localization(Node):
@@ -75,15 +96,18 @@ class Localization(Node):
 
         self.pose = Pose2D(x=math.nan, y=math.nan, theta=math.nan)
 
+        self.pos_filter = PositionKalmanFilter()
+        self.yaw = None
         self.last_good_fix = None
-        self.last_imu = None
+        self.last_odometry = None
+        self.last_prediction = None
 
         # ---------------------------------------------------------------------
-        # IMU Subscriber
+        # Odometry Subscriber
         # ---------------------------------------------------------------------
 
-        self.imu_subscription_ = self.create_subscription(
-            Float32, "/imu", self.imu_callback, 10
+        self.odometry_subscription_ = self.create_subscription(
+            OdometryState, "/odometry", self.odometry_callback, 10
         )
 
         # ---------------------------------------------------------------------
@@ -100,16 +124,32 @@ class Localization(Node):
 
         self.pose_publisher_ = self.create_publisher(Pose2D, "/pose", 10)
 
+        self.prediction_timer_ = self.create_timer(
+            KALMAN_TIMESTEP, self.prediction_callback
+        )
+
         self.get_logger().info("Started localization node.")
 
-    def imu_callback(self, msg: Float32):
-        if not math.isfinite(msg.data):
-            return
-        self.pose.theta = math.radians(msg.data)
-        self.last_imu = self.get_clock().now()
+    def prediction_callback(self):
+        """Advance position and uncertainty even when sensors stop updating."""
+        now = self.get_clock().now()
+        self.predict(now)
+        self.publish_pose()
+
+    def odometry_callback(self, msg: OdometryState):
+        now = self.get_clock().now()
+        self.predict(now)
+        self.yaw = normalize_angle(msg.yaw)
+        forward, left = msg.velocity.x, msg.velocity.y
+        self.pos_filter.correct_odometry(
+            forward * math.cos(self.yaw) - left * math.sin(self.yaw),
+            forward * math.sin(self.yaw) + left * math.cos(self.yaw),
+        )
+        self.last_odometry = now
         self.publish_pose()
 
     def gnss_callback(self, msg: UBXNavPVT):
+        now = self.get_clock().now()
         # Message might not have the information we want.
         if (
             not msg.gnss_fix_ok
@@ -117,22 +157,40 @@ class Localization(Node):
             or msg.invalid_llh
             or not math.isfinite(msg.lat)
             or not math.isfinite(msg.lon)
+            or not math.isfinite(msg.h_acc)
+            or msg.h_acc < 0
         ):
             return
-        self.last_good_fix = self.get_clock().now()
-        self.pose.x = msg.lat * UBX_DEG_SCALE
-        self.pose.y = msg.lon * UBX_DEG_SCALE
+        self.predict(now)
+        self.pos_filter.correct_gnss(
+            msg.lat * UBX_DEG_SCALE,
+            msg.lon * UBX_DEG_SCALE,
+            msg.h_acc * 1e-3,  # UBX horizontal accuracy is in millimeters.
+        )
+        self.last_good_fix = now
         self.publish_pose()
 
-    def publish_pose(self):
-        """Publish our current pose while both GNSS and IMU updates are fresh."""
-        if self.last_good_fix is None or self.last_imu is None:
+    def predict(self, now):
+        """Advance the filter to this time before a timer tick or correction."""
+        previous = self.last_prediction
+        self.last_prediction = now
+        if previous is None:
             return
+
+        dt = (now - previous).nanoseconds * 1e-9
+        # TODO: handle funky timer business.
+        self.pos_filter.predict(dt)
+
+    def publish_pose(self):
+        """Publish what the current Kalman filter thinks our pose is."""
         now = self.get_clock().now()
-        since_last_good_fix = (now - self.last_good_fix).nanoseconds * 1e-9
-        since_last_imu = (now - self.last_imu).nanoseconds * 1e-9
-        if since_last_good_fix < GOOD_FIX_TIMEOUT and since_last_imu < GOOD_IMU_TIMEOUT:
-            self.pose_publisher_.publish(self.pose)
+        if has_timed_out(self.last_good_fix, GOOD_FIX_TIMEOUT, now) or has_timed_out(
+            self.last_odometry, GOOD_ODOM_TIMEOUT, now
+        ):
+            return
+        lat, lon = self.pos_filter.coordinates()
+        self.pose = Pose2D(x=lat, y=lon, theta=self.yaw)
+        self.pose_publisher_.publish(self.pose)
 
 
 # =============================================================================

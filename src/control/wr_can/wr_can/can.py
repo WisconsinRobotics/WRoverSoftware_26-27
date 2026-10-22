@@ -31,7 +31,7 @@
 # Publishes to:
 #   '/can_receive_swerve' (CanReceiveSwerve)
 #       Description:
-#           Absolute encoder positions of swerve motors.
+#           Steering motor PID positions in degrees.
 #       Format:
 #           fl_encoder (float32)
 #           fr_encoder (float32)
@@ -47,6 +47,9 @@
 #   '/can_receive_arm' (CanReceiveArm)
 #       TODO
 #
+#   '/can_receive_drive' (CanReceiveDrive)
+#       TODO (but this is done)
+#
 # =============================================================================
 
 import rclpy
@@ -56,6 +59,7 @@ from std_msgs.msg import String
 
 from wr_control_msgs.msg import CanReceiveSwerve
 from wr_control_msgs.msg import CanReceiveArm
+from wr_control_msgs.msg import CanReceiveDrive
 
 import can
 import time
@@ -70,10 +74,15 @@ IN_OUT_VESC = 82
 UP_DOWN_VESC = 81
 GRIPPER_VESC = 85
 
-FL_VESC = 70
-FR_VESC = 72
-BL_VESC = 74
-BR_VESC = 76
+FL_DRIVE_VESC = 70
+FR_DRIVE_VESC = 72
+BL_DRIVE_VESC = 74
+BR_DRIVE_VESC = 76
+
+FL_STEERING_VESC = 71
+FR_STEERING_VESC = 73
+BL_STEERING_VESC = 75
+BR_STEERING_VESC = 77
 
 CHANNEL = "can0"
 
@@ -175,43 +184,63 @@ class CANNode(Node):
                 # ----- STATUS (command 9) -----
                 {
                     "can_id": (9 << 8) | SIDE_TO_SIDE_VESC,
-                    "can_mask": 0xFFFF,
+                    "can_mask": 0x1FFFFFFF,
                     "extended": True,
                 },
                 {
                     "can_id": (9 << 8) | IN_OUT_VESC,
-                    "can_mask": 0xFFFF,
+                    "can_mask": 0x1FFFFFFF,
                     "extended": True,
                 },
                 {
                     "can_id": (9 << 8) | UP_DOWN_VESC,
-                    "can_mask": 0xFFFF,
+                    "can_mask": 0x1FFFFFFF,
                     "extended": True,
                 },
                 {
                     "can_id": (9 << 8) | GRIPPER_VESC,
-                    "can_mask": 0xFFFF,
+                    "can_mask": 0x1FFFFFFF,
+                    "extended": True,
+                },
+                {
+                    "can_id": (9 << 8) | FL_DRIVE_VESC,
+                    "can_mask": 0x1FFFFFFF,
+                    "extended": True,
+                },
+                {
+                    "can_id": (9 << 8) | FR_DRIVE_VESC,
+                    "can_mask": 0x1FFFFFFF,
+                    "extended": True,
+                },
+                {
+                    "can_id": (9 << 8) | BL_DRIVE_VESC,
+                    "can_mask": 0x1FFFFFFF,
+                    "extended": True,
+                },
+                {
+                    "can_id": (9 << 8) | BR_DRIVE_VESC,
+                    "can_mask": 0x1FFFFFFF,
                     "extended": True,
                 },
                 # ----- STATUS_4 (command 16) -----
                 {
-                    "can_id": (16 << 8) | FL_VESC,
-                    "can_mask": 0xFFFF,
+                    "can_id": (16 << 8) | FL_STEERING_VESC,
+                    "can_mask": 0x1FFFFFFF,
                     "extended": True,
                 },
                 {
-                    "can_id": (16 << 8) | FR_VESC,
-                    "can_mask": 0xFFFF,
+                    "can_id": (16 << 8) | FR_STEERING_VESC,
+                    "can_mask": 0x1FFFFFFF,
                     "extended": True,
                 },
                 {
-                    "can_id": (16 << 8) | BL_VESC,
-                    "can_mask": 0xFFFF,
+                    "can_id": (16 << 8) | BL_STEERING_VESC,
+                    "can_mask": 0x1FFFFFFF,
                     "extended": True,
                 },
                 {
-                    "can_id": (16 << 8) | BR_VESC,
-                    "can_mask": 0xFFFF,
+                    "can_id": (16 << 8) | BR_STEERING_VESC,
+                    "can_mask": 0x1FFFFFFF,
                     "extended": True,
                 },
             ],
@@ -254,6 +283,12 @@ class CANNode(Node):
             10,
         )
 
+        self.receive_drive_publisher = self.create_publisher(
+            CanReceiveDrive,
+            "can_receive_drive",
+            10,
+        )
+
         # ----- Receive swerve state -----
 
         self.receive_swerve = CanReceiveSwerve()
@@ -262,6 +297,8 @@ class CANNode(Node):
         self.receive_swerve.fr_encoder = 0.0
         self.receive_swerve.bl_encoder = 0.0
         self.receive_swerve.br_encoder = 0.0
+
+        self.receive_drive = CanReceiveDrive()
 
         # ----- Receive arm state -----
 
@@ -399,7 +436,7 @@ class CANNode(Node):
 
         arb_id = msg.arbitration_id
 
-        command_id = (arb_id >> 8) & 0xFF
+        command_id = arb_id >> 8
 
         vesc_id = arb_id & 0xFF
 
@@ -417,16 +454,16 @@ class CANNode(Node):
                 / 50
             )
 
-            if vesc_id == FL_VESC:
+            if vesc_id == FL_STEERING_VESC:
                 self.receive_swerve.fl_encoder = position
 
-            elif vesc_id == FR_VESC:
+            elif vesc_id == FR_STEERING_VESC:
                 self.receive_swerve.fr_encoder = position
 
-            elif vesc_id == BL_VESC:
+            elif vesc_id == BL_STEERING_VESC:
                 self.receive_swerve.bl_encoder = position
 
-            elif vesc_id == BR_VESC:
+            elif vesc_id == BR_STEERING_VESC:
                 self.receive_swerve.br_encoder = position
 
             else:
@@ -438,18 +475,25 @@ class CANNode(Node):
         # ----- STATUS -----
 
         elif command_id == 9:
-            # TODO
-            # current = (
-            #    int.from_bytes(
-            #        data[4:6],
-            #        "big",
-            #        signed=True,
-            #    )
-            #    / 10
-            # )
+            rpm = float(int.from_bytes(data[0:4], "big", signed=True))
 
-            # Publish the complete arm state
-            self.receive_arm_publisher.publish(self.receive_arm)
+            if vesc_id == FL_DRIVE_VESC:
+                self.receive_drive.fl_rpm = rpm
+
+            elif vesc_id == FR_DRIVE_VESC:
+                self.receive_drive.fr_rpm = rpm
+
+            elif vesc_id == BL_DRIVE_VESC:
+                self.receive_drive.bl_rpm = rpm
+
+            elif vesc_id == BR_DRIVE_VESC:
+                self.receive_drive.br_rpm = rpm
+
+            else:
+                # TODO arm stuff
+                return
+
+            self.receive_drive_publisher.publish(self.receive_drive)
 
     # =========================================================================
     # Cleanup

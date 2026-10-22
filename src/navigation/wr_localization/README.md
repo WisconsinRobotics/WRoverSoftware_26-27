@@ -1,4 +1,4 @@
-This node publishes the pose data generated from the sensors. It sends pose data after every update, only stopping when the GNSS or IMU data gets too old.
+This node publishes the pose data generated from the sensors. It sends pose data after every update, only stopping when the GNSS or odometry data gets too old. The Kalman filter lives in `wr_localization/filter.py`.
 
 Usage example:
 
