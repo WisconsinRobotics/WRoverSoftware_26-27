@@ -19,7 +19,6 @@ setup(
     maintainer_email="wisconsinrobotics@gmail.com",
     description="Launches the ublox_dgnss_node",
     license="MIT",
-    tests_require=[],
     entry_points={
         "console_scripts": [],
     },

@@ -19,7 +19,6 @@ setup(
     maintainer_email="wisconsinrobotics@gmail.com",
     description="Receives CAN message requests and sends them",
     license="MIT",
-    tests_require=[],
     entry_points={
         "console_scripts": [
             "can = wr_can.can:main",

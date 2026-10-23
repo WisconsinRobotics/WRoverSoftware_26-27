@@ -19,7 +19,6 @@ setup(
     maintainer_email="wisconsinrobotics@gmail.com",
     description="Combines sensor data to figure out our state.",
     license="MIT",
-    tests_require=[],
     entry_points={
         "console_scripts": [
             "localization = wr_localization.localization:main",

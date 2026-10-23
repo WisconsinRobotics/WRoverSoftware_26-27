@@ -19,7 +19,6 @@ setup(
     maintainer_email="wisconsinrobotics@gmail.com",
     description="Reads Xbox controller input for swerve drive and arm.",
     license="MIT",
-    tests_require=["pytest"],
     entry_points={
         "console_scripts": [
             "drive_controller = wr_controller.drive_controller:main",

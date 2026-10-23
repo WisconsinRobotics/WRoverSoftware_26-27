@@ -19,7 +19,6 @@ setup(
     maintainer_email="wisconsinrobotics@gmail.com",
     description="Swerve drive controller with inverse kinematics",
     license="MIT",
-    tests_require=["pytest"],
     entry_points={
         "console_scripts": [
             "swerve = wr_drive.swerve:main",

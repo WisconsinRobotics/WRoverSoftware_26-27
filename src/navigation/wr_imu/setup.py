@@ -19,7 +19,6 @@ setup(
     maintainer_email="wisconsinrobotics@gmail.com",
     description="Publishes IMU yaw",
     license="MIT",
-    tests_require=[],
     entry_points={
         "console_scripts": [
             "imu = wr_imu.imu:main",
