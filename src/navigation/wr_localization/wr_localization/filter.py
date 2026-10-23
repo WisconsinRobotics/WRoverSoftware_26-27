@@ -17,6 +17,9 @@ INITIAL_VEL_VAR = 1.0  # (m/s)^2, TODO: tune
 INITIAL_OMEGA_VAR = 1.0  # (rad/s)^2, TODO: tune
 ACC_NOISE = 0.25  # m^2/s^3, TODO: tune
 ROT_ACC_NOISE = 0.1  # rad^2/s^3, TODO: tune
+CONTROL_RESPONSE_TIME = 0.5  # seconds to reach ~63% of commanded velocity, TODO: tune
+CONTROL_VEL_STDDEV = 1.0  # m/s, uncertainty in commanded velocity, TODO: tune
+CONTROL_OMEGA_STDDEV = 1.0  # rad/s, TODO: tune
 C_GNSS = np.eye(2, 6)
 C_IMU = np.array([[0.0, 0.0, 0.0, 0.0, 1.0, 0.0]])
 C_ODOM = np.array(
@@ -30,6 +33,10 @@ C_ODOM = np.array(
 # note that R_GNSS is calculated on the fly
 R_ODOM = np.diag([ODOM_VEL_STDDEV**2, ODOM_VEL_STDDEV**2, ODOM_OMEGA_STDDEV**2])
 R_IMU = np.array([[IMU_YAW_STDDEV**2]])
+# TODO: what is this??
+U_CONTROL = np.diag(
+    [CONTROL_VEL_STDDEV**2, CONTROL_VEL_STDDEV**2, CONTROL_OMEGA_STDDEV**2]
+)
 
 
 def normalize_angle(angle: float) -> float:
@@ -50,10 +57,12 @@ class RoverKalmanFilter:
     y = measurement vector
     P = uncertainty matrix
     A = state transition matrix
+    B = input matrix
     C = observation matrix
     Q = process noise covariance
     R = measurement noise covariance
     K = Kalman gain
+    u = input
     """
 
     def __init__(self, x0: FloatArray | None = None, P0: FloatArray | None = None):
@@ -79,14 +88,17 @@ class RoverKalmanFilter:
 
     @property
     def east(self) -> float:
+        """Current east coordinate estimate."""
         return float(self.x[0])
 
     @property
     def north(self) -> float:
+        """Current north coordinate estimate."""
         return float(self.x[1])
 
     @property
     def yaw(self) -> float:
+        """Current yaw estimate."""
         return float(self.x[4])
 
     @staticmethod
@@ -104,28 +116,55 @@ class RoverKalmanFilter:
         )
 
     @staticmethod
+    def B(dt: float) -> FloatArray:
+        """Returns B(t), the input matrix after dt seconds."""
+        # We model the rover as exponentially decaying towards the desired velocity.
+        vel_gain = -math.expm1(-dt / CONTROL_RESPONSE_TIME)
+        # TODO: what is this
+        pos_gain = dt - CONTROL_RESPONSE_TIME * vel_gain
+        return np.array(
+            [
+                [pos_gain, 0.0, 0.0],
+                [0.0, pos_gain, 0.0],
+                [vel_gain, 0.0, 0.0],
+                [0.0, vel_gain, 0.0],
+                [0.0, 0.0, pos_gain],
+                [0.0, 0.0, vel_gain],
+            ]
+        )
+
+    @staticmethod
     def Q(dt: float) -> FloatArray:
         """Return Q(dt), the process noise covariance matrix after dt seconds."""
         # TODO: understand this
         t2, t3 = dt**2 / 2.0, dt**3 / 3.0
-        q, q_yaw = ACC_NOISE, ROT_ACC_NOISE
+        q, q_rot = ACC_NOISE, ROT_ACC_NOISE
         return np.array(
             [
                 [q * t3, 0.0, q * t2, 0.0, 0.0, 0.0],
                 [0.0, q * t3, 0.0, q * t2, 0.0, 0.0],
                 [q * t2, 0.0, q * dt, 0.0, 0.0, 0.0],
                 [0.0, q * t2, 0.0, q * dt, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, q_yaw * t3, q_yaw * t2],
-                [0.0, 0.0, 0.0, 0.0, q_yaw * t2, q_yaw * dt],
+                [0.0, 0.0, 0.0, 0.0, q_rot * t3, q_rot * t2],
+                [0.0, 0.0, 0.0, 0.0, q_rot * t2, q_rot * dt],
             ]
         )
 
-    def predict(self, dt: float):
+    def predict(self, dt: float, u: FloatArray | None = None):
         """Predict state and update uncertainty using elapsed seconds."""
         A = self.A(dt)
-        self.x = A @ self.x
+        Q = self.Q(dt)
+        if u is None:
+            self.x = A @ self.x
+        else:
+            B = self.B(dt)
+            # TODO: what?
+            A = A - B @ C_ODOM
+            self.x = A @ self.x + B @ u
+            # TODO: what? again
+            Q = Q + B @ U_CONTROL @ B.T
         self.x[4] = normalize_angle(self.yaw)
-        self.P = A @ self.P @ A.T + self.Q(dt)
+        self.P = A @ self.P @ A.T + Q
 
     def correct(self, y: FloatArray, C: FloatArray, R: FloatArray):
         """Correction step using SOME observation vector and matrix, and covariance."""
@@ -147,7 +186,7 @@ class RoverKalmanFilter:
         self.correct(y, C_ODOM, R_ODOM)
 
     def correct_gnss(self, lat: float, lon: float, acc_m: float):
-        """Correct local position using a geographic fix and accuracy in meters."""
+        """Correct step for JUST the GNSS."""
         # Calculate covariance on the fly.
         R = np.eye(2) * max(acc_m, GNSS_MIN_STDDEV) ** 2
         if self.origin is None:

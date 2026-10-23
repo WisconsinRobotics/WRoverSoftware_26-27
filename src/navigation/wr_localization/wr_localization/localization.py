@@ -13,6 +13,8 @@
 # Subscribes to:
 #   '/imu' (std_msgs/Float32)
 #       Raw IMU yaw in degrees.
+#   '/swerve' (std_msgs/Float32MultiArray)
+#       [forward, strafe, left_trigger, right_trigger].
 #   '/odometry' (wr_navigation_msgs/OdometryState)
 #       Description:
 #           Wheel-derived body-frame velocity and omega.
@@ -54,10 +56,11 @@
 # =============================================================================
 
 import math
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Float32MultiArray
 from wr_navigation_msgs.msg import OdometryState
 from geometry_msgs.msg import Pose2D
 
@@ -78,6 +81,11 @@ GOOD_FIX_TYPES = [
 GOOD_FIX_TIMEOUT = 5.0
 GOOD_ODOM_TIMEOUT = 2.0
 GOOD_IMU_TIMEOUT = 2.0
+
+# TODO: calibrate these
+SWERVE_FORWARD_MPS = 3.0  # m/s
+SWERVE_STRAFE_MPS = 3.0  # m/s
+SWERVE_TURN_RADPS = 1.0  # rad/s
 
 
 def has_timed_out(last_update: Time | None, timeout: float, now: Time) -> bool:
@@ -102,6 +110,7 @@ class Localization(Node):
         self.last_odometry = None
         self.last_imu = None
         self.last_prediction = None
+        self.swerve_control = [0.0, 0.0, 0.0]
 
         self.yaw_offset = math.radians(self.declare_parameter("yaw_offset", 0.0).value)
 
@@ -129,6 +138,10 @@ class Localization(Node):
             UBXNavPVT, "/ubx_nav_pvt", self.gnss_callback, 10
         )
 
+        self.swerve_subscription_ = self.create_subscription(
+            Float32MultiArray, "/swerve", self.swerve_callback, 10
+        )
+
         # ---------------------------------------------------------------------
         # Pose Publisher
         # ---------------------------------------------------------------------
@@ -144,6 +157,16 @@ class Localization(Node):
     def prediction_callback(self):
         self.predict(self.get_clock().now())
         self.publish_pose()
+
+    def swerve_callback(self, msg: Float32MultiArray):
+        now = self.get_clock().now()
+        self.predict(now)
+        forward, strafe, left_trigger, right_trigger = msg.data
+        self.swerve_control = (
+            forward * SWERVE_FORWARD_MPS,
+            strafe * SWERVE_STRAFE_MPS,
+            (right_trigger - left_trigger) / 2.0 * SWERVE_TURN_RADPS,
+        )
 
     def imu_callback(self, msg: Float32):
         now = self.get_clock().now()
@@ -203,7 +226,14 @@ class Localization(Node):
 
         dt = (now - previous).nanoseconds * 1e-9
         # TODO: handle funky timer business.
-        self.filter.predict(dt)
+        if not has_timed_out(self.last_imu, GOOD_IMU_TIMEOUT, now):
+            forward, left, omega = self.swerve_control
+            c, s = math.cos(self.yaw), math.sin(self.yaw)
+            # TODO: use an EKF to account for heading uncertainty, as above.
+            u = np.array([forward * c - left * s, forward * s + left * c, omega])
+            self.filter.predict(dt, u)
+        else:
+            self.filter.predict(dt)
 
     def publish_pose(self):
         """Publish what the current Kalman filter thinks our pose is."""
