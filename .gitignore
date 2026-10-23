@@ -1,3 +1,5 @@
 build
 install
 log
+.gitconfig
+__pycache__
