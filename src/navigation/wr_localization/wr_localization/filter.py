@@ -4,6 +4,7 @@ from typing import TypeAlias
 import numpy as np
 from numpy.typing import NDArray
 from geometry_msgs.msg import Pose2D, Point
+from wr_nav.navigation import wrap_degrees, normalize_angle
 
 
 FloatArray: TypeAlias = NDArray[np.float64]
@@ -17,36 +18,19 @@ INITIAL_VEL_VAR = 1.0  # (m/s)^2, TODO: tune
 INITIAL_OMEGA_VAR = 1.0  # (rad/s)^2, TODO: tune
 ACC_NOISE = 0.25  # m^2/s^3, TODO: tune
 ROT_ACC_NOISE = 0.1  # rad^2/s^3, TODO: tune
-CONTROL_RESPONSE_TIME = 0.5  # seconds to reach ~63% of commanded velocity, TODO: tune
-CONTROL_VEL_STDDEV = 1.0  # m/s, uncertainty in commanded velocity, TODO: tune
-CONTROL_OMEGA_STDDEV = 1.0  # rad/s, TODO: tune
-C_GNSS = np.eye(2, 6)
-C_IMU = np.array([[0.0, 0.0, 0.0, 0.0, 1.0, 0.0]])
-C_ODOM = np.array(
-    [
-        [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-    ]
-)
+# (tau here refers to the fact that these are both time constants)
+TAU_VEL = 0.5  # seconds to reach ~63.2% of input velocity, TODO: tune
+TAU_ROT_VEL = 0.5  # seconds to reach ~63.2% of input angular velocity, TODO: tune
+INPUT_VEL_STDDEV = 1.0  # m/s, uncertainty in input velocity, TODO: tune
+INPUT_OMEGA_STDDEV = 1.0  # rad/s, TODO: tune
+C_GNSS = np.eye(2, 6)  # np.eye(6)[[0, 1]]
+C_IMU = np.eye(6)[[4]]
+C_ODOM = np.eye(6)[[2, 3, 5]]
 # sensor measurement errors are assumed independent.
 # note that R_GNSS is calculated on the fly
 R_ODOM = np.diag([ODOM_VEL_STDDEV**2, ODOM_VEL_STDDEV**2, ODOM_OMEGA_STDDEV**2])
 R_IMU = np.array([[IMU_YAW_STDDEV**2]])
-# TODO: what is this??
-U_CONTROL = np.diag(
-    [CONTROL_VEL_STDDEV**2, CONTROL_VEL_STDDEV**2, CONTROL_OMEGA_STDDEV**2]
-)
-
-
-def normalize_angle(angle: float) -> float:
-    """Wrap radians to [-pi, pi]."""
-    return math.atan2(math.sin(angle), math.cos(angle))
-
-
-def wrap_degrees(angle: float) -> float:
-    """Wrap degrees to [-180, 180)."""
-    return (angle + 180.0) % 360.0 - 180.0
+U = np.diag([INPUT_VEL_STDDEV**2, INPUT_VEL_STDDEV**2, INPUT_OMEGA_STDDEV**2])
 
 
 class RoverKalmanFilter:
@@ -55,14 +39,15 @@ class RoverKalmanFilter:
 
     x = state vector ([east, north, east_vel, north_vel, yaw, omega])
     y = measurement vector
+    u = input vector
     P = uncertainty matrix
     A = state transition matrix
     B = input matrix
     C = observation matrix
     Q = process noise covariance
     R = measurement noise covariance
+    U = input noise covariance
     K = Kalman gain
-    u = input
     """
 
     def __init__(self, x0: FloatArray | None = None, P0: FloatArray | None = None):
@@ -101,35 +86,38 @@ class RoverKalmanFilter:
         """Current yaw estimate."""
         return float(self.x[4])
 
+    @property
+    def omega(self) -> float:
+        """Current yaw rate estimate."""
+        return float(self.x[5])
+
     @staticmethod
     def A(dt: float) -> FloatArray:
         """Return A(dt), the state transition matrix after dt seconds."""
-        return np.array(
-            [
-                [1.0, 0.0, dt, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, dt, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 1.0, dt],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-            ]
-        )
+        # This matrix is basically just I but with dt at (0, 2), (1, 3), and (4, 5).
+        # Those correspond to change in east, change in north, and change in yaw respectively.
+        A = np.eye(6)
+        A[[0, 1, 4], [2, 3, 5]] = dt
+        return A
 
     @staticmethod
     def B(dt: float) -> FloatArray:
         """Returns B(t), the input matrix after dt seconds."""
         # We model the rover as exponentially decaying towards the desired velocity.
-        vel_gain = -math.expm1(-dt / CONTROL_RESPONSE_TIME)
+        # Essentially, we assume that the rover covers ~63.2% of its velocity error per time constant.
+        vel_gain = -math.expm1(-dt / TAU_VEL)
+        omega_gain = -math.expm1(-dt / TAU_ROT_VEL)
         # TODO: what is this
-        pos_gain = dt - CONTROL_RESPONSE_TIME * vel_gain
+        pos_gain = dt - TAU_VEL * vel_gain
+        yaw_gain = dt - TAU_ROT_VEL * omega_gain
         return np.array(
             [
                 [pos_gain, 0.0, 0.0],
                 [0.0, pos_gain, 0.0],
                 [vel_gain, 0.0, 0.0],
                 [0.0, vel_gain, 0.0],
-                [0.0, 0.0, pos_gain],
-                [0.0, 0.0, vel_gain],
+                [0.0, 0.0, yaw_gain],
+                [0.0, 0.0, omega_gain],
             ]
         )
 
@@ -153,16 +141,13 @@ class RoverKalmanFilter:
     def predict(self, dt: float, u: FloatArray | None = None):
         """Predict state and update uncertainty using elapsed seconds."""
         A = self.A(dt)
+        B = self.B(dt)
         Q = self.Q(dt)
-        if u is None:
-            self.x = A @ self.x
-        else:
-            B = self.B(dt)
-            # TODO: what?
-            A = A - B @ C_ODOM
-            self.x = A @ self.x + B @ u
-            # TODO: what? again
-            Q = Q + B @ U_CONTROL @ B.T
+        # Technically, the rover has to decay to zero velocity too.
+        A = A - B @ C_ODOM
+        u = np.zeros(3) if u is None else u
+        self.x = A @ self.x + B @ u
+        Q = Q + B @ U @ B.T
         self.x[4] = normalize_angle(self.yaw)
         self.P = A @ self.P @ A.T + Q
 
@@ -173,6 +158,7 @@ class RoverKalmanFilter:
         self.x += K @ err
         self.x[4] = normalize_angle(self.yaw)
         I_KC = np.eye(6) - K @ C
+        # Joseph form here makes this a bit more complicated.
         self.P = I_KC @ self.P @ I_KC.T + K @ R @ K.T
 
     def correct_imu(self, yaw: float):
@@ -186,7 +172,7 @@ class RoverKalmanFilter:
         self.correct(y, C_ODOM, R_ODOM)
 
     def correct_gnss(self, lat: float, lon: float, acc_m: float):
-        """Correct step for JUST the GNSS."""
+        """Correction step for JUST the GNSS."""
         # Calculate covariance on the fly.
         R = np.eye(2) * max(acc_m, GNSS_MIN_STDDEV) ** 2
         if self.origin is None:

@@ -129,8 +129,13 @@ def geo_to_dpos(start: Point, end: Point) -> Point:
 
 
 def normalize_angle(angle: float) -> float:
-    """Binds the angle from [-pi, pi)."""
+    """Binds the radians from [-pi, pi)."""
     return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def wrap_degrees(angle: float) -> float:
+    """Binds the degrees from [-180, 180)."""
+    return (angle + 180.0) % 360.0 - 180.0
 
 
 def clamp(val, low, high):

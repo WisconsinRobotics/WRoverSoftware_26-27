@@ -1,7 +1,8 @@
 {
     "python.analysis.extraPaths": [
         "./src/wr_commons",
-        "./install/*/local/lib/python3.10/dist-packages"
+        "./install/*/local/lib/python3.10/dist-packages",
+        "./install/*/lib/python3.10/site-packages"
     ],
     "python-envs.defaultEnvManager": "ms-python.python:system"
 }

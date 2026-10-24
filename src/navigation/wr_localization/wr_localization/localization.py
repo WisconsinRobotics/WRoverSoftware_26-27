@@ -15,15 +15,15 @@
 #       Raw IMU yaw in degrees.
 #   '/swerve' (std_msgs/Float32MultiArray)
 #       [forward, strafe, left_trigger, right_trigger].
-#   '/odometry' (wr_navigation_msgs/OdometryState)
+#   '/odometry' (geometry_msgs/Twist)
 #       Description:
 #           Wheel-derived body-frame velocity and omega.
 #       Format:
-#           velocity (Point):
+#           linear:
 #            x: forward (m/s)
 #            y: strafe (m/s)
-#            z: zero
-#           omega: yaw rate in rad/s, CCW positive
+#            z: unused
+#           angular.z: yaw rate in rad/s, CCW positive
 #   '/ubx_nav_pvt' (ublox_ubx_msgs/UBXNavPVT)
 #       Description:
 #           GNSS receiver data, including latitude and longitude data.
@@ -61,12 +61,12 @@ import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
 from std_msgs.msg import Float32, Float32MultiArray
-from wr_navigation_msgs.msg import OdometryState
-from geometry_msgs.msg import Pose2D
+from geometry_msgs.msg import Pose2D, Twist
 
 from ublox_ubx_msgs.msg import UBXNavPVT, GpsFix
 
-from wr_localization.filter import RoverKalmanFilter, normalize_angle
+from wr_localization.filter import RoverKalmanFilter
+from wr_nav.navigation import has_timed_out, normalize_angle
 
 
 UBX_DEG_SCALE = 1e-7
@@ -83,17 +83,8 @@ GOOD_ODOM_TIMEOUT = 2.0
 GOOD_IMU_TIMEOUT = 2.0
 
 # TODO: calibrate these
-SWERVE_FORWARD_MPS = 3.0  # m/s
-SWERVE_STRAFE_MPS = 3.0  # m/s
-SWERVE_TURN_RADPS = 1.0  # rad/s
-
-
-def has_timed_out(last_update: Time | None, timeout: float, now: Time) -> bool:
-    """Check if update has timed out or not."""
-    if last_update is None:
-        return True
-    since_last_update = (now - last_update).nanoseconds * 1e-9
-    return since_last_update > timeout
+SWERVE_MPS = 3.0  # m/s
+SWERVE_RADPS = 1.0  # rad/s
 
 
 class Localization(Node):
@@ -109,7 +100,7 @@ class Localization(Node):
         self.last_good_fix = None
         self.last_odometry = None
         self.last_imu = None
-        self.last_prediction = None
+        self.last_prediction = self.get_clock().now()
         self.swerve_control = [0.0, 0.0, 0.0]
 
         self.yaw_offset = math.radians(self.declare_parameter("yaw_offset", 0.0).value)
@@ -127,7 +118,7 @@ class Localization(Node):
         # ---------------------------------------------------------------------
 
         self.odometry_subscription_ = self.create_subscription(
-            OdometryState, "/odometry", self.odometry_callback, 10
+            Twist, "/odometry", self.odometry_callback, 10
         )
 
         # ---------------------------------------------------------------------
@@ -159,38 +150,35 @@ class Localization(Node):
         self.publish_pose()
 
     def swerve_callback(self, msg: Float32MultiArray):
-        now = self.get_clock().now()
-        self.predict(now)
         forward, strafe, left_trigger, right_trigger = msg.data
+        # TODO: if the max speed is SWERVE_MPS, then this assumes that the max speed is sqrt(2)*SWERVE_MPS
+        # but if the max speed is SWERVE_MPS/sqrt(2), then the name is misleading AND max speed is dependent on direction?
         self.swerve_control = (
-            forward * SWERVE_FORWARD_MPS,
-            strafe * SWERVE_STRAFE_MPS,
-            (right_trigger - left_trigger) / 2.0 * SWERVE_TURN_RADPS,
+            forward * SWERVE_MPS,
+            strafe * SWERVE_MPS,
+            (right_trigger - left_trigger) / 2.0 * SWERVE_RADPS,
         )
 
     def imu_callback(self, msg: Float32):
         now = self.get_clock().now()
         if not math.isfinite(msg.data):
             return
-        self.predict(now)
         self.yaw = normalize_angle(math.radians(msg.data) + self.yaw_offset)
         self.filter.correct_imu(self.yaw)
         self.last_imu = now
         self.publish_pose()
 
-    def odometry_callback(self, msg: OdometryState):
+    def odometry_callback(self, msg: Twist):
         now = self.get_clock().now()
         # TODO: should we keep track of odom even when the imu times out?
         if self.yaw is None or has_timed_out(self.last_imu, GOOD_IMU_TIMEOUT, now):
             return
-        self.predict(now)
-        fwd, left = float(msg.velocity.x), float(msg.velocity.y)
-        # TODO: what is this? supposedly converts fwd/strafe to east/north
+        fwd, left = msg.linear.x, msg.linear.y
         c, s = math.cos(self.yaw), math.sin(self.yaw)
         # TODO: use an EKF to model yaw uncertainty
         # or just add extra noise
         self.filter.correct_odometry(
-            fwd * c - left * s, fwd * s + left * c, float(msg.omega)
+            fwd * c - left * s, fwd * s + left * c, float(msg.angular.z)
         )
         self.last_odometry = now
         self.publish_pose()
@@ -208,7 +196,6 @@ class Localization(Node):
             or msg.h_acc < 0
         ):
             return
-        self.predict(now)
         self.filter.correct_gnss(
             msg.lat * UBX_DEG_SCALE,
             msg.lon * UBX_DEG_SCALE,
@@ -218,7 +205,7 @@ class Localization(Node):
         self.publish_pose()
 
     def predict(self, now: Time):
-        """Advance the filter to this time before corrections."""
+        """Advance the filter only on the 20 Hz prediction timer."""
         previous = self.last_prediction
         self.last_prediction = now
         if previous is None:

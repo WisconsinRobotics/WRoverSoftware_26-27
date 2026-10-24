@@ -8,7 +8,7 @@
   <license>MIT</license>
 
   <exec_depend>rclpy</exec_depend>
-  <exec_depend>wr_navigation_msgs</exec_depend>
+  <exec_depend>wr_nav</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>wr_control_msgs</exec_depend>
 
