@@ -4,15 +4,13 @@
   <name>wr_localization</name>
   <version>0.1.0</version>
   <description>
-    Localization node that combines sensor data to provide accurate robot pose data.
-    Publishes pose data to /pose from odometry, GNSS, and IMU data.
+    Publishes the latest GNSS position and IMU heading to /pose.
   </description>
   <maintainer email="wisconsinrobotics@gmail.com">Wisconsin Robotics</maintainer>
   <license>MIT</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
-  <exec_depend>python3-numpy</exec_depend>
   <exec_depend>wr_nav</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>ublox_ubx_msgs</exec_depend>
