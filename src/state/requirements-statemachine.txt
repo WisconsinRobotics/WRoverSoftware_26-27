@@ -1,2 +1,0 @@
-python-statemachine==3.2.2
-python-statemachine[diagrams]==3.2.2
