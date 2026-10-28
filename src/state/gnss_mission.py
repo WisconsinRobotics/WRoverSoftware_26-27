@@ -5,7 +5,7 @@ class GNSSMission(StateChart):
     default = State(initial=True)
     traversal = State()
     following = State()
-    blink = State()
+    blink = State(final=True)
 
     path = (
         default.to(traversal) 
