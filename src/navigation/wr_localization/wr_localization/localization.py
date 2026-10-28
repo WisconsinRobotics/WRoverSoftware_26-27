@@ -153,6 +153,7 @@ class Localization(Node):
         forward, strafe, left_trigger, right_trigger = msg.data
         # TODO: if the max speed is SWERVE_MPS, then this assumes that the max speed is sqrt(2)*SWERVE_MPS
         # but if the max speed is SWERVE_MPS/sqrt(2), then the name is misleading AND max speed is dependent on direction?
+        # This requires some form of normalization in control.
         self.swerve_control = (
             forward * SWERVE_MPS,
             strafe * SWERVE_MPS,

@@ -1,4 +1,5 @@
 import math
+from enum import IntEnum
 from typing import TypeAlias
 
 import numpy as np
@@ -9,23 +10,58 @@ from wr_nav.navigation import wrap_degrees, normalize_angle
 
 FloatArray: TypeAlias = NDArray[np.float64]
 
+
+class State(IntEnum):
+    """Indices of the state vector."""
+
+    EAST = 0
+    NORTH = 1
+    EAST_VEL = 2
+    NORTH_VEL = 3
+    YAW = 4
+    OMEGA = 5
+
+
+def C(*states: State) -> FloatArray:
+    """
+    Returns an observation matrix of JUST the required states.
+
+    Note that this doesn't work for any observation matrices that can't be expressed as rows of I.
+    """
+    return np.eye(len(State))[list(states)]
+
+
 EARTH_RADIUS = 6371000.0
+
+# Tunable constants
+## Standard deviation of observations
 GNSS_MIN_STDDEV = 0.1  # meters, in case h_acc is too low, TODO: tune
 ODOM_VEL_STDDEV = 0.2  # m/s, TODO: tune
 ODOM_OMEGA_STDDEV = 0.1  # rad/s, TODO: tune
 IMU_YAW_STDDEV = math.radians(2.0)  # radians, TODO: tune
+
+## Initial uncertainties
 INITIAL_VEL_VAR = 1.0  # (m/s)^2, TODO: tune
 INITIAL_OMEGA_VAR = 1.0  # (rad/s)^2, TODO: tune
-ACC_NOISE = 0.25  # m^2/s^3, TODO: tune
-ROT_ACC_NOISE = 0.1  # rad^2/s^3, TODO: tune
+
+## Process noise
+ACC_NOISE = 0.25  # m^2/s^3, TODO: tune (though this is hard to tune, a guess is okay.)
+ROT_ACC_NOISE = (
+    0.1  # rad^2/s^3, TODO: tune (though this is hard to tune, a guess is okay.)
+)
+
+## Input constants and noise
 # (tau here refers to the fact that these are both time constants)
 TAU_VEL = 0.5  # seconds to reach ~63.2% of input velocity, TODO: tune
 TAU_ROT_VEL = 0.5  # seconds to reach ~63.2% of input angular velocity, TODO: tune
 INPUT_VEL_STDDEV = 1.0  # m/s, uncertainty in input velocity, TODO: tune
 INPUT_OMEGA_STDDEV = 1.0  # rad/s, TODO: tune
-C_GNSS = np.eye(2, 6)  # np.eye(6)[[0, 1]]
-C_IMU = np.eye(6)[[4]]
-C_ODOM = np.eye(6)[[2, 3, 5]]
+
+# Matrices relevant to the Kalman filter.
+GNSS_STATES = (State.EAST, State.NORTH)
+ODOM_STATES = (State.EAST_VEL, State.NORTH_VEL, State.OMEGA)
+IMU_STATES = (State.YAW,)
+ANGLE_STATES = (State.YAW,)
 # sensor measurement errors are assumed independent.
 # note that R_GNSS is calculated on the fly
 R_ODOM = np.diag([ODOM_VEL_STDDEV**2, ODOM_VEL_STDDEV**2, ODOM_OMEGA_STDDEV**2])
@@ -52,7 +88,7 @@ class RoverKalmanFilter:
 
     def __init__(self, x0: FloatArray | None = None, P0: FloatArray | None = None):
         self.origin = None
-        self.x = np.zeros(6) if x0 is None else x0
+        self.x = np.zeros(len(State)) if x0 is None else x0
         self.P = (
             np.diag(
                 [
@@ -67,37 +103,37 @@ class RoverKalmanFilter:
             if P0 is None
             else P0
         )
-        if self.x.shape != (6,) or self.P.shape != (6, 6):
+        if self.x.shape != (len(State),) or self.P.shape != (len(State), len(State)):
             raise ValueError("invalid initial state estimate or uncertainty matrix")
-        self.x[4] = normalize_angle(self.x[4])
+        self.wrap_angles()
 
     @property
     def east(self) -> float:
         """Current east coordinate estimate."""
-        return float(self.x[0])
+        return float(self.x[State.EAST])
 
     @property
     def north(self) -> float:
         """Current north coordinate estimate."""
-        return float(self.x[1])
+        return float(self.x[State.NORTH])
 
     @property
     def yaw(self) -> float:
         """Current yaw estimate."""
-        return float(self.x[4])
+        return float(self.x[State.YAW])
 
     @property
     def omega(self) -> float:
         """Current yaw rate estimate."""
-        return float(self.x[5])
+        return float(self.x[State.OMEGA])
 
     @staticmethod
     def A(dt: float) -> FloatArray:
         """Return A(dt), the state transition matrix after dt seconds."""
         # This matrix is basically just I but with dt at (0, 2), (1, 3), and (4, 5).
         # Those correspond to change in east, change in north, and change in yaw respectively.
-        A = np.eye(6)
-        A[[0, 1, 4], [2, 3, 5]] = dt
+        A = np.eye(len(State))
+        A[GNSS_STATES + IMU_STATES, ODOM_STATES] = dt
         return A
 
     @staticmethod
@@ -124,7 +160,6 @@ class RoverKalmanFilter:
     @staticmethod
     def Q(dt: float) -> FloatArray:
         """Return Q(dt), the process noise covariance matrix after dt seconds."""
-        # TODO: understand this
         t2, t3 = dt**2 / 2.0, dt**3 / 3.0
         q, q_rot = ACC_NOISE, ROT_ACC_NOISE
         return np.array(
@@ -144,49 +179,61 @@ class RoverKalmanFilter:
         B = self.B(dt)
         Q = self.Q(dt)
         # Technically, the rover has to decay to zero velocity too.
-        A = A - B @ C_ODOM
-        u = np.zeros(3) if u is None else u
+        A = A - B @ C(*ODOM_STATES)
+        u = np.zeros(B.shape[1]) if u is None else u
         self.x = A @ self.x + B @ u
+        self.wrap_angles()
         Q = Q + B @ U @ B.T
-        self.x[4] = normalize_angle(self.yaw)
         self.P = A @ self.P @ A.T + Q
 
-    def correct(self, y: FloatArray, C: FloatArray, R: FloatArray):
+    def correct(
+        self,
+        y: FloatArray,
+        C: FloatArray,
+        R: FloatArray,
+        angle_rows: tuple[int, ...] = tuple(),
+    ):
         """Correction step using SOME observation vector and matrix, and covariance."""
-        err = y - C @ self.x
-        K = self.P @ C.T @ np.linalg.inv(C @ self.P @ C.T + R)
-        self.x += K @ err
-        self.x[4] = normalize_angle(self.yaw)
-        I_KC = np.eye(6) - K @ C
+        res = y - C @ self.x
+        # If the state vector is wrapped over the [-pi, pi] boundary,
+        # then the error becomes drastically big. Thus, we wrap it here.
+        for row in angle_rows:
+            res[row] = normalize_angle(res[row])
+        # K = PC^T(CPC^T+R)^-1
+        # => (CPC^T+R)(K^T)=CP
+        K = np.linalg.solve(C @ self.P @ C.T + R, C @ self.P).T
+        self.x += K @ res
+        self.wrap_angles()
+        I_KC = np.eye(len(State)) - K @ C
         # Joseph form here makes this a bit more complicated.
         self.P = I_KC @ self.P @ I_KC.T + K @ R @ K.T
 
     def correct_imu(self, yaw: float):
         """Correction step for JUST the IMU."""
-        y = np.array([self.yaw + normalize_angle(yaw - self.yaw)])
-        self.correct(y, C_IMU, R_IMU)
+        y = np.array([yaw])
+        self.correct(y, C(*IMU_STATES), R_IMU, angle_rows=(0,))
 
     def correct_odometry(self, east_vel: float, north_vel: float, omega: float):
         """Correction step for JUST the odometry."""
         y = np.array([east_vel, north_vel, omega])
-        self.correct(y, C_ODOM, R_ODOM)
+        self.correct(y, C(*ODOM_STATES), R_ODOM)
 
     def correct_gnss(self, lat: float, lon: float, acc_m: float):
         """Correction step for JUST the GNSS."""
         # Calculate covariance on the fly.
         R = np.eye(2) * max(acc_m, GNSS_MIN_STDDEV) ** 2
         if self.origin is None:
-            # We work in this different coordinate system for now.
-            # TODO: find a better way.
+            # We work in this different coordinate system because meters are much more convenient.
             self.origin = Point(x=lat, y=lon)
-            self.x[:2] = 0.0
+            rel = list(GNSS_STATES)
+            self.x[rel] = 0.0
             # Reset the matrix to be something like:
             # [ R 0 ]
             # [ 0 U ]
             # (where U is unchanged)
-            self.P[:2, :] = 0.0
-            self.P[:, :2] = 0.0
-            self.P[:2, :2] = R
+            self.P[rel, :] = 0.0
+            self.P[:, rel] = 0.0
+            self.P[np.ix_(rel, rel)] = R
             return
 
         y = EARTH_RADIUS * np.array(
@@ -196,7 +243,12 @@ class RoverKalmanFilter:
                 math.radians(lat - self.origin.x),
             ]
         )
-        self.correct(y, C_GNSS, R)
+        self.correct(y, C(*GNSS_STATES), R)
+
+    def wrap_angles(self):
+        """Wraps all of our angle states from [-pi, pi]."""
+        for state in ANGLE_STATES:
+            self.x[state] = normalize_angle(self.x[state])
 
     def pose(self) -> Pose2D:
         """Return latitude, longitude, and yaw as a geographic pose."""

@@ -25,15 +25,15 @@ SENSOR_TIMEOUT = 1.0
 # TODO: should be tau * radius / (60 * pole_pairs * motor_turns_per_wheel_turn)
 # or something like that...
 ERPM_TO_MPS = 1.0
-# TODO: confirm wheel-center spacing in meters from wr_drive
-WHEELBASE = 0.93
-TRACK_WIDTH = 0.60
+# TODO: confirm wheel-center spacing in meters from wr_drive. perhaps use common source.
+BODY_HEIGHT = 0.93
+BODY_WIDTH = 0.60
 
 WHEEL_LOCATIONS = (
-    (WHEELBASE / 2, TRACK_WIDTH / 2),  # FL
-    (WHEELBASE / 2, -TRACK_WIDTH / 2),  # FR
-    (-WHEELBASE / 2, TRACK_WIDTH / 2),  # BL
-    (-WHEELBASE / 2, -TRACK_WIDTH / 2),  # BR
+    (BODY_HEIGHT / 2, BODY_WIDTH / 2),  # FL
+    (BODY_HEIGHT / 2, -BODY_WIDTH / 2),  # FR
+    (-BODY_HEIGHT / 2, BODY_WIDTH / 2),  # BL
+    (-BODY_HEIGHT / 2, -BODY_WIDTH / 2),  # BR
 )
 
 
@@ -95,7 +95,7 @@ class Odometry(Node):
             self.twist.linear.x += fwd / 4.0
             self.twist.linear.y += left / 4.0
             self.twist.angular.z += x * left - y * fwd
-        self.twist.angular.z /= WHEELBASE**2 + TRACK_WIDTH**2
+        self.twist.angular.z /= BODY_HEIGHT**2 + BODY_WIDTH**2
 
     def publish_odometry(self):
         now = self.get_clock().now()

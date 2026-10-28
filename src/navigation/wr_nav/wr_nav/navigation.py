@@ -86,7 +86,7 @@ import math
 import random
 import rclpy
 from rclpy.time import Time
-from enum import Enum
+from enum import IntEnum
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray, Int32
 from geometry_msgs.msg import Point, Pose2D
@@ -129,7 +129,7 @@ def geo_to_dpos(start: Point, end: Point) -> Point:
 
 
 def normalize_angle(angle: float) -> float:
-    """Binds the radians from [-pi, pi)."""
+    """Binds the radians from [-pi, pi]."""
     return math.atan2(math.sin(angle), math.cos(angle))
 
 
@@ -169,7 +169,7 @@ def has_timed_out(last_update: Time | None, timeout: float, now: Time) -> bool:
     return since_last_update > timeout
 
 
-class NavModes(Enum):
+class NavMode(IntEnum):
     STOP = 0
     DANCE = 1
     TRACKING = 2
@@ -183,7 +183,7 @@ class Nav(Node):
     def __init__(self):
         super().__init__("nav")
 
-        self.mode = NavModes.STOP  # not using change_mode is okay here
+        self.mode = NavMode.STOP  # not using change_mode is okay here
         self.traversal_target = None
         self.approach_target = None
         self.person = None
@@ -262,7 +262,7 @@ class Nav(Node):
         self.pose = msg
 
     def main_timer_callback(self):
-        if self.mode == NavModes.TRAVERSAL:
+        if self.mode == NavMode.TRAVERSAL:
             if self.last_pose is None or self.pose is None:
                 self.publish_drive_helper(0.0, 0.0, 0.0)
                 return
@@ -271,27 +271,27 @@ class Nav(Node):
                 self.get_logger().warning("wr_nav: no pose received in time, idling.")
                 # Ideally, navigation should never change its own mode.
                 # This should be passed to state machine.
-                self.change_mode(NavModes.STOP)
+                self.change_mode(NavMode.STOP)
         match self.mode:
-            case NavModes.STOP:
+            case NavMode.STOP:
                 self.publish_drive_helper(0.0, 0.0, 0.0)
-            case NavModes.DANCE:
+            case NavMode.DANCE:
                 self.do_dance()
-            case NavModes.TRACKING:
+            case NavMode.TRACKING:
                 self.do_tracking()
-            case NavModes.FINDING:
+            case NavMode.FINDING:
                 self.do_finding()
-            case NavModes.TRAVERSAL:
+            case NavMode.TRAVERSAL:
                 self.do_traversal()
-            case NavModes.APPROACH:
+            case NavMode.APPROACH:
                 self.do_approach()
-            case NavModes.FOLLOWING:
+            case NavMode.FOLLOWING:
                 self.do_following()
 
     def nav_mode_callback(self, msg: Int32):
         """Changes our current navigation mode."""
         try:
-            mode = NavModes(msg.data)
+            mode = NavMode(msg.data)
         except ValueError:
             self.get_logger().warning(f"wr_nav: unknown navigation mode {msg.data}.")
             return
@@ -367,13 +367,6 @@ class Nav(Node):
 
         # Scale rotation by heading error.
         err = normalize_angle(math.atan2(dpos.y, dpos.x) - self.pose.theta)
-        # Previous steering code retained for rollback: uncomment this block
-        # and remove the calculate_steering_command call and publication below.
-        # rot = clamp(self.kp_rot * err, -1.0, 1.0)
-        # if abs(err) < self.heading_tolerance:
-        #     self.publish_drive_helper(TRAVERSAL_SPEED, 0.0, rot)
-        # else:
-        #     self.publish_drive_helper(0.0, 0.0, rot)
         command = steer_helper(
             err, TRAVERSAL_SPEED, self.heading_tolerance, self.kp_rot
         )
@@ -417,19 +410,12 @@ class Nav(Node):
 
         # x is CW positive
         err = math.atan2(-right, forward)
-        # Previous steering code retained for rollback: uncomment this block
-        # and remove the calculate_steering_command call and publication below.
-        # rot = clamp(self.kp_rot * err, -1.0, 1.0)
-        # if abs(err) < self.heading_tolerance:
-        #     self.publish_drive_helper(APPROACH_SPEED, 0.0, rot)
-        # else:
-        #     self.publish_drive_helper(0.0, 0.0, rot)
         command = steer_helper(err, APPROACH_SPEED, self.heading_tolerance, self.kp_rot)
         self.publish_drive_helper(*command)
 
-    def change_mode(self, mode: NavModes):
+    def change_mode(self, mode: NavMode):
         """Changes navigation mode."""
-        if mode == NavModes.DANCE:
+        if mode == NavMode.DANCE:
             self.last_dance_controls = (0.0, 0.0, 0.0)
         self.last_mode_change = self.get_clock().now()
         self.mode = mode
