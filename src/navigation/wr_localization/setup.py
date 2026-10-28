@@ -13,11 +13,11 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         (os.path.join("share", package_name, "launch"), glob("launch/*")),
     ],
-    install_requires=["setuptools", "numpy"],
+    install_requires=["setuptools"],
     zip_safe=True,
     maintainer="Wisconsin Robotics",
     maintainer_email="wisconsinrobotics@gmail.com",
-    description="Combines sensor data to figure out our state.",
+    description="Publishes the latest GNSS position and IMU heading.",
     license="MIT",
     entry_points={
         "console_scripts": [
