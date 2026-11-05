@@ -1,7 +1,9 @@
 import math
+from std_msgs.msg import Int32
 
 from statemachine import StateChart, State
 from wr_detection_msgs.msg import Person
+from wr_nav.navigation import NavMode
 
 # Person.position is in millimeters unless the detection node converts it
 # (point_cloud_utils works in mm). Set this to 1.0 if /person is in meters.
@@ -17,11 +19,13 @@ COME_RETRIGGER_M = 2.0  # COME only starts a new approach beyond this distance
 class AstronautMission(StateChart):
     "The statemachine for the astronaut mission"
 
-    def __init__(self, monitor, *args, **kwargs):
+    def __init__(self, nav_publisher, monitor, *args, **kwargs):
         # monitor: anything with a .person property (see person_monitor.py)
         self.monitor = monitor
         # FOLLOW keeps following until told otherwise; COME stops on arrival.
         self.continuous = False
+        # nav_publisher helps publish to the navigation node
+        self.nav_publisher = nav_publisher
         super().__init__(*args, **kwargs)
 
     default = State(initial=True)
@@ -40,6 +44,9 @@ class AstronautMission(StateChart):
         | following.to(tracking, cond="arrived")
         | following.to(finding, cond="is_person_lost")
         | tracking.to(finding, cond="is_person_lost")
+        | following.to(default, cond="mission_complete")
+        | tracking.to(default, cond="mission_complete")
+        | finding.to(default, cond="mission_complete")
     )
 
     "Helpers"
@@ -82,6 +89,9 @@ class AstronautMission(StateChart):
         d = self._distance_m()
         return (not self.continuous) and d is not None and d < ARRIVE_DISTANCE_M
 
+    def mission_complete(self) -> bool:
+        return False
+
     "Remember which gesture started the current following"
 
     def start_follow(self):
@@ -93,10 +103,10 @@ class AstronautMission(StateChart):
     "Actions to be carried out during the state"
 
     def on_enter_following(self):
-        return None
+        self.nav_publisher.publisher.publish(Int32(data=NavMode.FOLLOWING))
 
     def on_enter_tracking(self):
-        return None
+        self.nav_publisher.publisher.publish(Int32(data=NavMode.TRACKING))
 
     def on_enter_finding(self):
-        return None
+        self.nav_publisher.publisher.publish(Int32(data=NavMode.FINDING))

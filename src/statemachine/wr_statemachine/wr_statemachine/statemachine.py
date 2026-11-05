@@ -1,25 +1,35 @@
 import rclpy
 
-from astronaut_mission import AstronautMission
+from rclpy.executors import SingleThreadedExecutor
+
+# from astronaut_mission import AstronautMission
+# from gnss_mission import GNSSMission
+from nav_publisher import NavPublisher
 from person_monitor import PersonMonitor
 
 
 def main():
     rclpy.init()
     monitor = PersonMonitor()
-    mission = AstronautMission(monitor)
+    monitor.create_timer(0.1, monitor)
+    nav_publisher = NavPublisher()
+    nav_publisher.create_timer(0.1, nav_publisher)
 
-    # Re-check the transition conditions 10 times per second. Each tick tries
-    # the "path" transitions from the current state and takes the first one
-    # whose condition is true.
-    monitor.create_timer(0.1, mission.path)
+    # astronaut_mission = AstronautMission(nav_publisher, monitor)
+    # gnss_mission = GNSSMission(nav_publisher)
+
+    executor = SingleThreadedExecutor()
+    executor.add_node(nav_publisher)
+    executor.add_node(monitor)
 
     try:
-        rclpy.spin(monitor)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()  # not sure if I should do this
         monitor.destroy_node()
+        nav_publisher.destroy_node()
         rclpy.shutdown()
 
 

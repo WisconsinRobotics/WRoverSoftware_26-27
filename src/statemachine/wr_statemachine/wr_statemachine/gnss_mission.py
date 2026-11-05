@@ -4,6 +4,9 @@ from statemachine import StateChart, State
 class GNSSMission(StateChart):
     "The state machine for the GNSS Mission"
 
+    def __init__(self, nav_publisher):
+        self.nav_publisher = nav_publisher
+
     default = State(initial=True)
     traversal = State()
     following = State()
@@ -27,6 +30,7 @@ class GNSSMission(StateChart):
     "Actions to be carried out during the state"
 
     def on_traversal(self):
+
         return None
 
     def on_following(self):
