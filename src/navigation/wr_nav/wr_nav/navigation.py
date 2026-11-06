@@ -93,8 +93,9 @@ from geometry_msgs.msg import Point, Pose2D
 from wr_detection_msgs.msg import Person
 
 # Default parameters
-DEFAULT_HEADING_TOLERANCE = 20.0  # degrees
-DEFAULT_DISTANCE_TOLERANCE = 1.0  # meters
+DEFAULT_HEADING_TOLERANCE = 40.0  # degrees
+DEFAULT_DISTANCE_TOLERANCE = 2.0  # meters
+DEFAULT_SLOWDOWN_DISTANCE = 3.0  # meters
 DEFAULT_ROTATION_KP = 0.5
 
 # Timeouts and other validation values
@@ -109,6 +110,7 @@ FINDING_TIMEOUT = 10.0
 DANCE_LIMIT = 0.3  # maximum value to use for dancing
 TRAVERSAL_SPEED = 0.3
 APPROACH_SPEED = 0.3
+MIN_DRIVE_SPEED = 0.05
 FINDING_ROT = 0.3
 FAR_PERSON_CENTER_TOLERANCE = 40.0
 FAR_PERSON_ROTATION_KP = 0.005
@@ -143,6 +145,23 @@ def clamp(val, low, high):
     return max(low, min(high, val))
 
 
+def distance_speed(
+    distance: float,
+    cruise_speed: float,
+    stop_distance: float,
+    slowdown_distance: float,
+) -> float:
+    # TODO: simplify?
+    if distance <= stop_distance:
+        return 0.0
+    elif distance >= slowdown_distance:
+        return cruise_speed
+    minimum = min(MIN_DRIVE_SPEED, cruise_speed)
+    return minimum + (cruise_speed - minimum) * (distance - stop_distance) / (
+        slowdown_distance - stop_distance
+    )
+
+
 def steer_helper(
     heading_error: float,
     forward_speed: float,
@@ -154,8 +173,12 @@ def steer_helper(
 
     Used for more complicated navigation commands.
     """
+    if abs(heading_error) < heading_tolerance:
+        forward_speed *= math.cos((math.pi / 2) * heading_error / heading_tolerance)
+    else:
+        forward_speed = 0.0
     return (
-        forward_speed if abs(heading_error) < heading_tolerance else 0.0,
+        forward_speed,
         0.0,
         clamp(rotation_kp * heading_error, -1.0, 1.0),
     )
@@ -208,6 +231,9 @@ class Nav(Node):
             .get_parameter_value()
             .double_value
         )
+        self.slowdown_distance = self.declare_parameter(
+            "slowdown_distance", DEFAULT_SLOWDOWN_DISTANCE
+        ).value
         self.kp_rot = (
             self.declare_parameter("kp_rot", DEFAULT_ROTATION_KP)
             .get_parameter_value()
@@ -271,7 +297,8 @@ class Nav(Node):
                 self.get_logger().warning("wr_nav: no pose received in time, idling.")
                 # Ideally, navigation should never change its own mode.
                 # This should be passed to state machine.
-                self.change_mode(NavMode.STOP)
+                self.publish_drive_helper(0.0, 0.0, 0.0)
+                return
         match self.mode:
             case NavMode.STOP:
                 self.publish_drive_helper(0.0, 0.0, 0.0)
@@ -361,15 +388,16 @@ class Nav(Node):
         dpos = geo_to_dpos(Point(x=self.pose.x, y=self.pose.y), self.traversal_target)
         dist = math.hypot(dpos.x, dpos.y)
 
-        if dist < self.dist_tolerance:
+        if dist <= self.dist_tolerance:
             self.publish_drive_helper(0.0, 0.0, 0.0)
             return
 
         # Scale rotation by heading error.
         err = normalize_angle(math.atan2(dpos.y, dpos.x) - self.pose.theta)
-        command = steer_helper(
-            err, TRAVERSAL_SPEED, self.heading_tolerance, self.kp_rot
+        speed = distance_speed(
+            dist, TRAVERSAL_SPEED, self.dist_tolerance, self.slowdown_distance
         )
+        command = steer_helper(err, speed, self.heading_tolerance, self.kp_rot)
         self.publish_drive_helper(*command)
 
     def do_following(self):
@@ -404,13 +432,17 @@ class Nav(Node):
         right = target.x
         forward = target.z
 
-        if math.hypot(right, forward) < self.dist_tolerance:
+        dist = math.hypot(right, forward)
+        if dist <= self.dist_tolerance:
             self.publish_drive_helper(0.0, 0.0, 0.0)
             return
 
         # x is CW positive
         err = math.atan2(-right, forward)
-        command = steer_helper(err, APPROACH_SPEED, self.heading_tolerance, self.kp_rot)
+        speed = distance_speed(
+            dist, APPROACH_SPEED, self.dist_tolerance, self.slowdown_distance
+        )
+        command = steer_helper(err, speed, self.heading_tolerance, self.kp_rot)
         self.publish_drive_helper(*command)
 
     def change_mode(self, mode: NavMode):
