@@ -15,3 +15,12 @@ repos:
     hooks:
       - id: ruff-check
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: validate-metadata
+        name: check ros2 package metadata
+        entry: python3 scripts/validateMetadata.py
+        language: system
+        require_serial: true
+        files: (^|/)(package\.xml|setup\.py)$
