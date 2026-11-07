@@ -179,9 +179,7 @@ class CANNode(Node):
 
         # ----- CAN bus -----
 
-        self._bus = can.Bus(
-            channel=CHANNEL,
-            interface="socketcan",
+        self._bus = can.Bus(channel=CHANNEL,interface="socketcan",
             can_filters=[
                 # ----- STATUS (command 9) -----
                 {
@@ -226,26 +224,26 @@ class CANNode(Node):
                 },
                 # ----- STATUS_4 (command 16) -----
                 {
-                    "can_id": (16 << 8) | FL_STEERING_VESC,
+                    "can_id": (16 << 8) | FL_DRIVE_VESC,
                     "can_mask": 0x1FFFFFFF,
                     "extended": True,
                 },
                 {
-                    "can_id": (16 << 8) | FR_STEERING_VESC,
+                    "can_id": (16 << 8) | FR_DRIVE_VESC,
                     "can_mask": 0x1FFFFFFF,
                     "extended": True,
                 },
                 {
-                    "can_id": (16 << 8) | BL_STEERING_VESC,
+                    "can_id": (16 << 8) | BL_DRIVE_VESC,
                     "can_mask": 0x1FFFFFFF,
                     "extended": True,
                 },
                 {
-                    "can_id": (16 << 8) | BR_STEERING_VESC,
+                    "can_id": (16 << 8) | BR_DRIVE_VESC,
                     "can_mask": 0x1FFFFFFF,
                     "extended": True,
                 },
-            ],
+            ]
         )
 
         self.get_logger().info(f"CAN bus opened on {CHANNEL}")
@@ -331,7 +329,7 @@ class CANNode(Node):
             lines = msg.data.strip().splitlines()
 
             for line in lines:
-                self.get_logger().info(f'I heard: "{line}"')
+                #self.get_logger().info(f'I heard: "{line}"')
 
                 parts = line.split()
 
@@ -443,10 +441,13 @@ class CANNode(Node):
         vesc_id = arb_id & 0xFF
 
         data = msg.data
+        #if(vesc_id == 70):
+         #   self.get_logger().info(f"CAN message '{data}' \n command_id: '{command_id}'")
 
         # ----- STATUS_4 -----
 
         if command_id == 16:
+            
             position = (
                 int.from_bytes(
                     data[6:8],
@@ -456,16 +457,17 @@ class CANNode(Node):
                 / 50
             )
 
-            if vesc_id == FL_STEERING_VESC:
+            #self.get_logger().info(f"position: '{position}'")
+            if vesc_id == FL_DRIVE_VESC:
                 self.receive_swerve.fl_encoder = position
 
-            elif vesc_id == FR_STEERING_VESC:
+            elif vesc_id == FR_DRIVE_VESC:
                 self.receive_swerve.fr_encoder = position
 
-            elif vesc_id == BL_STEERING_VESC:
+            elif vesc_id == BL_DRIVE_VESC:
                 self.receive_swerve.bl_encoder = position
 
-            elif vesc_id == BR_STEERING_VESC:
+            elif vesc_id == BR_DRIVE_VESC:
                 self.receive_swerve.br_encoder = position
 
             else:

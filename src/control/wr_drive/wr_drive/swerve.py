@@ -178,7 +178,7 @@ class SwerveControl(Node):
 
         self.limit_rotation = -10
         self.wheels_straight_angle = 180
-        self.angle_error_threshold = 1.5
+        self.angle_error_threshold = 0.5
         self.kI = 100
 
         # ---------------------------------------------------------------------
@@ -230,19 +230,23 @@ class SwerveControl(Node):
         # Encoder correction state
         # ---------------------------------------------------------------------
 
-        # collected_* means "a real encoder reading has arrived for this wheel"
-        # current_enc_* is the latest steering angle in the VESC convention (180 = straight)
-        # TODO: verify that when wheels are straight the VESCs report 180
-
         self.collected_FL = False
         self.collected_FR = False
         self.collected_BL = False
         self.collected_BR = False
-
-        self.current_enc_FL = 0.0
-        self.current_enc_FR = 0.0
-        self.current_enc_BL = 0.0
-        self.current_enc_BR = 0.0
+        
+        # Initial encoder calibration offsets
+        self.enc_corr_FL = 0.0
+        self.enc_corr_FR = 0.0
+        self.enc_corr_BL = 0.0
+        self.enc_corr_BR = 0.0
+        
+        # Corrected encoder positions
+        # 180 degrees = straight forward
+        self.current_enc_FL = 180.0
+        self.current_enc_FR = 180.0
+        self.current_enc_BL = 180.0
+        self.current_enc_BR = 180.0
 
         # ---------------------------------------------------------------------
         # Motor control state
@@ -313,15 +317,20 @@ class SwerveControl(Node):
 
     # =========================================================================
     # Encoder callback
-    # =========================================================================
+    # =======i==================================================================
 
     def encoder_callback(self, msg):
         """
         Handle absolute steering encoder positions for all four wheels.
 
-        Readings are already in the VESC convention (180 = straight), the
-        same frame used by CAN_PACKET_SET_POS, so they are used as-is.
-        No startup calibration is performed.
+        On the first reading, calibrate each wheel independently.
+
+        The initial encoder position becomes the reference (zero).
+        Subsequent readings are corrected so that:
+
+            180 degrees = straight forward
+
+        Corrected encoder range: [0, 360)
         """
 
         readings = {
@@ -332,8 +341,38 @@ class SwerveControl(Node):
         }
 
         for wheel, value in readings.items():
-            setattr(self, f"collected_{wheel}", True)
-            setattr(self, f"current_enc_{wheel}", value % 360)
+
+            collected = getattr(self, f"collected_{wheel}")
+
+            # -------------------------------------------------------------
+            # Initial calibration
+            # -------------------------------------------------------------
+
+            if not collected:
+                setattr(self, f"enc_corr_{wheel}", value)
+                setattr(self, f"collected_{wheel}", True)
+
+                self.get_logger().info(
+                    f"{wheel} encoder calibrated at {value:.2f}"
+                )
+
+            # -------------------------------------------------------------
+            # Apply encoder correction
+            # -------------------------------------------------------------
+
+            enc_corr = getattr(self, f"enc_corr_{wheel}")
+
+            corrected = value - enc_corr
+
+            # Convert to 0-360 degrees, with 180 representing forward
+            current_enc = (corrected + 180.0) % 360.0
+
+            setattr(
+                self,
+                f"current_enc_{wheel}",
+                current_enc,
+            )
+
 
     # =========================================================================
     # Swerve input callback
@@ -343,10 +382,10 @@ class SwerveControl(Node):
 
         motion = msg.data
 
-        self.get_logger().info(
-            f"/swerve received: forward={motion[0]:.2f} strafe={motion[1]:.2f} "
-            f"left_trigger={motion[2]:.2f} right_trigger={motion[3]:.2f}"
-        )
+        #self.get_logger().info(
+        #    f"/swerve received: forward={motion[0]:.2f} strafe={motion[1]:.2f} "
+        #    f"left_trigger={motion[2]:.2f} right_trigger={motion[3]:.2f}"
+        #)
 
         # Axis mapping:
         #   motion[0] = forward/back
@@ -430,11 +469,17 @@ class SwerveControl(Node):
             counter += 1
 
             if counter > COUNTER_MAX:
+                 # Calculate shortest angular difference
+                angle_difference = (
+                    (self.wheels_straight_angle - current_enc + 180.0) % 360.0
+                ) - 180.0
+
                 if (
-                    abs(self.wheels_straight_angle - current_enc)
+                    abs(angle_difference)
                     > self.angle_error_threshold
                 ):
-                    error -= (self.wheels_straight_angle - current_enc) / self.kI
+                    self.get_logger().info(f"abs(self.wheels_straight_angle - current_enc): '{abs(self.wheels_straight_angle - current_enc)}'")
+                    error += (angle_difference) / self.kI
 
                     error = math.copysign(
                         min(abs(error), 10),
@@ -442,7 +487,9 @@ class SwerveControl(Node):
                     )
         else:
             counter = 0
-
+        
+        
+        #self.get_logger().info(f"Errror: '{error}'") 
         angle += error
 
         setattr(self, f"counter_{wheel}", counter)
