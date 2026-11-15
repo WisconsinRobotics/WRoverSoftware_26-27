@@ -2,25 +2,30 @@ import rclpy
 
 from rclpy.executors import SingleThreadedExecutor
 
-# from astronaut_mission import AstronautMission
-# from gnss_mission import GNSSMission
-from nav_publisher import NavPublisher
-from person_monitor import PersonMonitor
+from wr_statemachine.astronaut_mission import AstronautMission
+from wr_statemachine.gnss_mission import GNSSMission
+from wr_statemachine.nodes import SMPublisher, SMSubscriber
 
 
 def main():
     rclpy.init()
-    monitor = PersonMonitor()
-    monitor.create_timer(0.1, monitor)
-    nav_publisher = NavPublisher()
-    nav_publisher.create_timer(0.1, nav_publisher)
+    smsubscriber = SMSubscriber()
+    smpublisher = SMPublisher()
 
-    # astronaut_mission = AstronautMission(nav_publisher, monitor)
-    # gnss_mission = GNSSMission(nav_publisher)
+    missions = [
+        AstronautMission(smpublisher, smsubscriber),
+        GNSSMission(smpublisher, smsubscriber),
+    ]
+
+    def tick():
+        for mission in missions:
+            mission.send("path")
+
+    smsubscriber.create_timer(0.1, tick)
 
     executor = SingleThreadedExecutor()
-    executor.add_node(nav_publisher)
-    executor.add_node(monitor)
+    executor.add_node(smsubscriber)
+    executor.add_node(smpublisher)
 
     try:
         executor.spin()
@@ -28,8 +33,10 @@ def main():
         pass
     finally:
         executor.shutdown()  # not sure if I should do this
-        monitor.destroy_node()
-        nav_publisher.destroy_node()
+
+        # Do I need the below ones?
+        smpublisher.destroy_node()
+        smsubscriber.destroy_node()
         rclpy.shutdown()
 
 

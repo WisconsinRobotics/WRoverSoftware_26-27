@@ -1,6 +1,7 @@
-from enum import Enum
+from enum import IntEnum
 
 
-class StateMachineEnum(Enum):
-    GNSS = 0
-    ASTRONAUT = 1
+class StateMachineEnum(IntEnum):
+    NOMISSION = 0
+    GNSS = 1
+    ASTRONAUT = 2

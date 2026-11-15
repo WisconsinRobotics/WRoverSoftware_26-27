@@ -1,9 +1,11 @@
 import math
+import time
 from std_msgs.msg import Int32
 
 from statemachine import StateChart, State
 from wr_detection_msgs.msg import Person
 from wr_nav.navigation import NavMode
+from wr_statemachine.statemachine_enum import StateMachineEnum
 
 # Person.position is in millimeters unless the detection node converts it
 # (point_cloud_utils works in mm). Set this to 1.0 if /person is in meters.
@@ -15,17 +17,21 @@ POSITION_TO_M = 0.001
 ARRIVE_DISTANCE_M = 1.5  # COME stops this far from the astronaut
 COME_RETRIGGER_M = 2.0  # COME only starts a new approach beyond this distance
 
+FINDING_TIME_LIMIT = 10
+
 
 class AstronautMission(StateChart):
     "The statemachine for the astronaut mission"
 
-    def __init__(self, nav_publisher, monitor, *args, **kwargs):
+    def __init__(self, smpublisher, smsubscriber, *args, **kwargs):
         # monitor: anything with a .person property (see person_monitor.py)
-        self.monitor = monitor
+        self.smpublisher = smpublisher
         # FOLLOW keeps following until told otherwise; COME stops on arrival.
         self.continuous = False
         # nav_publisher helps publish to the navigation node
-        self.nav_publisher = nav_publisher
+        self.smsubscriber = smsubscriber
+        # Timer to check if we've been trying to look for the astronaut for more than FINDING_TIME_LIMIT
+        self.timer = -1
         super().__init__(*args, **kwargs)
 
     default = State(initial=True)
@@ -36,7 +42,11 @@ class AstronautMission(StateChart):
     # Conditions are given as strings because the methods are defined below.
     # Transitions from the same state are tried in the order listed.
     path = (
-        default.to(finding)
+        default.to(finding, cond="is_active")
+        | following.to(default, cond="mission_complete")
+        | tracking.to(default, cond="mission_complete")
+        | finding.to(default, cond="mission_complete")
+        | finding.to(default, cond="timed_out", on="report_failure")
         | finding.to(tracking, cond="is_person_found")
         | tracking.to(following, cond="follow_gesture", on="start_follow")
         | tracking.to(following, cond="come_gesture", on="start_come")
@@ -44,16 +54,13 @@ class AstronautMission(StateChart):
         | following.to(tracking, cond="arrived")
         | following.to(finding, cond="is_person_lost")
         | tracking.to(finding, cond="is_person_lost")
-        | following.to(default, cond="mission_complete")
-        | tracking.to(default, cond="mission_complete")
-        | finding.to(default, cond="mission_complete")
     )
 
     "Helpers"
 
     def _distance_m(self):
         """Horizontal distance to the person in meters, or None if unknown."""
-        p = self.monitor.person
+        p = self.smsubscriber.person
         if p is None or p.position.z <= 0:  # z <= 0 means no valid depth
             return None
         return math.hypot(p.position.x, p.position.z) * POSITION_TO_M
@@ -61,17 +68,17 @@ class AstronautMission(StateChart):
     "Conditional statements for state transition"
 
     def is_person_found(self) -> bool:
-        return self.monitor.person is not None
+        return self.smsubscriber.person is not None
 
     def is_person_lost(self) -> bool:
-        return self.monitor.person is None
+        return self.smsubscriber.person is None
 
     def follow_gesture(self) -> bool:
-        p = self.monitor.person
+        p = self.smsubscriber.person
         return p is not None and p.gesture == Person.FOLLOW
 
     def come_gesture(self) -> bool:
-        p = self.monitor.person
+        p = self.smsubscriber.person
         d = self._distance_m()
         return (
             p is not None
@@ -81,7 +88,7 @@ class AstronautMission(StateChart):
         )
 
     def stay_gesture(self) -> bool:
-        p = self.monitor.person
+        p = self.smsubscriber.person
         return p is not None and p.gesture == Person.STAY
 
     def arrived(self) -> bool:
@@ -89,8 +96,18 @@ class AstronautMission(StateChart):
         d = self._distance_m()
         return (not self.continuous) and d is not None and d < ARRIVE_DISTANCE_M
 
-    def mission_complete(self) -> bool:
+    def timed_out(self) -> bool:
+        if time.monotonic() - self.timer >= FINDING_TIME_LIMIT:
+            return True
         return False
+
+    def is_active(self):
+        if self.smsubscriber.active_mission == StateMachineEnum.ASTRONAUT:
+            return True
+        return False
+
+    def report_failure(self):
+        self.smsubscriber.active_mission = StateMachineEnum.NOMISSION
 
     "Remember which gesture started the current following"
 
@@ -103,10 +120,22 @@ class AstronautMission(StateChart):
     "Actions to be carried out during the state"
 
     def on_enter_following(self):
-        self.nav_publisher.publisher.publish(Int32(data=NavMode.FOLLOWING))
+        self.smpublisher.nav_publisher.publish(Int32(data=NavMode.FOLLOWING))
 
     def on_enter_tracking(self):
-        self.nav_publisher.publisher.publish(Int32(data=NavMode.TRACKING))
+        self.smpublisher.nav_publisher.publish(Int32(data=NavMode.TRACKING))
 
     def on_enter_finding(self):
-        self.nav_publisher.publisher.publish(Int32(data=NavMode.FINDING))
+        self.timer = time.monotonic()
+        self.smpublisher.nav_publisher.publish(Int32(data=NavMode.FINDING))
+
+    def on_enter_default(self):
+        if self.smsubscriber.active_mission == StateMachineEnum.NOMISSION:
+            self.smpublisher.nav_publisher.publish(Int32(data=NavMode.STOP))
+
+    "Mission complete to switch to another mission or finish everything"
+
+    def mission_complete(self):
+        if self.smsubscriber.active_mission != StateMachineEnum.ASTRONAUT:
+            return True
+        return False
