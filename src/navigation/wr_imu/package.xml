@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>wr_imu</name>
+  <version>0.1.0</version>
+  <description>
+    Driver node for the CTRE Phoenix6 Pigeon2 IMU over CAN.
+    Publishes the sensor's yaw angle in degrees to /imu at 100 Hz.
+    This is the source of the rover's heading, localization uses it
+    and corrects the drift against GNSS.
+  </description>
+  <maintainer email="wisconsinrobotics@gmail.com">Wisconsin Robotics</maintainer>
+  <license>MIT</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

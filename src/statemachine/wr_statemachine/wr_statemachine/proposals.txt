@@ -1,0 +1,7 @@
+Convert node publisher and subscriber to 2 nodes (publisher node and subscriber node)
+instead wherein they all subscribe to whatever they need to reduce clutter
+
+Mission starting happens from GUI, so check for signals from there.
+One signal to check is mission switching and mission starting. Signals from GUI are very rare
+
+Organize the publishers and subscribers into both nodes
