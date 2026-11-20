@@ -6,9 +6,9 @@
 #   speed and steering commands.
 #
 #   This node approximates the displacement to the target in east/north meters
-#   to calculate the remaining distance and desired heading. It turns toward
-#   the target before driving forward, continues correcting its heading while
-#   moving, and stops once it reaches the configured distance tolerance.
+#   to calculate the remaining distance and travel direction. It drives toward
+#   the target using forward and strafe motion and stops once it reaches the
+#   configured distance tolerance.
 #
 # =============================================================================
 # Brief:
@@ -380,7 +380,7 @@ class Nav(Node):
         self.publish_drive_helper(0.0, 0.0, rot)
 
     def do_traversal(self):
-        """Navigates to a GNSS target by first facing the target and moving towards it."""
+        """Navigates to a GNSS target by moving towards it in a straight line."""
         if self.traversal_target is None:
             self.get_logger().warning("wr_nav: using traversal mode without a target.")
             self.publish_drive_helper(0.0, 0.0, 0.0)
@@ -392,13 +392,11 @@ class Nav(Node):
             self.publish_drive_helper(0.0, 0.0, 0.0)
             return
 
-        # Scale rotation by heading error.
         err = normalize_angle(math.atan2(dpos.y, dpos.x) - self.pose.theta)
         speed = distance_speed(
             dist, TRAVERSAL_SPEED, self.dist_tolerance, self.slowdown_distance
         )
-        command = steer_helper(err, speed, self.heading_tolerance, self.kp_rot)
-        self.publish_drive_helper(*command)
+        self.publish_drive_helper(speed * math.cos(err), speed * math.sin(err), 0.0)
 
     def do_following(self):
         if self.person is None or has_timed_out(
